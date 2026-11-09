@@ -61,15 +61,16 @@ def write_figures(out_dir: Path, job: dict, probs: np.ndarray,
 
     test = splits == "test"
     if test.any():
+        unit = job.get("primary_unit") or job.get("evaluation_unit") or "subject"
         y_true = (merged.loc[test, "label"].astype(str) == class_order[1]).astype(int).to_numpy()
         p_pos = probs[test, positive]
 
-        # Confusion matrices: window-level and subject-level (primary unit).
+        # Confusion matrices: window-level and primary-unit level (subject or recording).
         y_sub, p_sub = _subject_probs(
             merged.loc[test, ["group_id", "label"]], probs[test], class_order)
         fig, axes = plt.subplots(1, 2, figsize=(8.4, 3.6))
         for ax, (name, y, p) in zip(axes, [
-                ("window", y_true, p_pos), ("subject", y_sub, p_sub[:, positive])]):
+                ("window", y_true, p_pos), (unit, y_sub, p_sub[:, positive])]):
             cm = confusion(y, (p >= 0.5).astype(int))
             matrix = np.array([[cm["tn"], cm["fp"]], [cm["fn"], cm["tp"]]])
             ax.imshow(matrix, cmap="Blues")
@@ -90,7 +91,7 @@ def write_figures(out_dir: Path, job: dict, probs: np.ndarray,
         # ROC curves.
         fig, ax = plt.subplots(figsize=(4.2, 4.0))
         for name, y, score in (("window", y_true, p_pos),
-                               ("subject", y_sub, p_sub[:, positive])):
+                               (unit, y_sub, p_sub[:, positive])):
             if len(np.unique(y)) < 2:
                 continue
             fpr, tpr = _roc_points(y, score)
@@ -125,6 +126,10 @@ def write_figures(out_dir: Path, job: dict, probs: np.ndarray,
     history_file = out_dir / "history.csv"
     if history_file.is_file():
         history = pd.read_csv(history_file)
+        unit = job.get("primary_unit") or job.get("evaluation_unit") or "subject"
+        score_col = f"val_{unit}_balanced_accuracy"
+        if score_col not in history.columns:
+            score_col = "val_subject_balanced_accuracy"
         fig, axes = plt.subplots(1, 2, figsize=(8.4, 3.2))
         axes[0].plot(history["epoch"], history["train_loss"], label="train")
         axes[0].plot(history["epoch"], history["val_loss"], label="val")
@@ -133,8 +138,8 @@ def write_figures(out_dir: Path, job: dict, probs: np.ndarray,
         axes[0].legend(fontsize=8)
         axes[0].set_title("loss")
         axes[1].plot(history["epoch"], history["train_accuracy"], label="train acc")
-        axes[1].plot(history["epoch"], history["val_subject_balanced_accuracy"],
-                     label="val subject bAcc")
+        axes[1].plot(history["epoch"], history[score_col],
+                     label=f"val {unit} bAcc")
         axes[1].axvline(job.get("best_epoch", 0), color="#999", linestyle="--", linewidth=1)
         axes[1].set_xlabel("epoch")
         axes[1].set_ylim(0, 1.02)
@@ -149,17 +154,17 @@ def write_figures(out_dir: Path, job: dict, probs: np.ndarray,
 
 def _metrics_table(job: dict) -> list[str]:
     metrics = job["metrics"]
-    test_subject = metrics["test"]["subject"]
+    unit = job.get("primary_unit") or job.get("evaluation_unit") or "subject"
     lines = [
         "| split | 单位 | n | accuracy | balanced acc | sensitivity | specificity | F1 | AUROC | AP |",
         "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for split in ("train", "val", "test"):
-        for level in ("window", "subject"):
+        for level in ("window", "recording", "subject"):
             m = metrics[split][level]
             if m is None:
                 continue
-            mark = " **←主指标**" if (split == "test" and level == "subject") else ""
+            mark = " **←主指标**" if (split == "test" and level == unit) else ""
             lines.append(
                 f"| {split} | {level} | {m['n']} | {_fmt(m['accuracy'])} | "
                 f"{_fmt(m['balanced_accuracy'])}{mark} | {_fmt(m['sensitivity'])} | "
@@ -169,7 +174,8 @@ def _metrics_table(job: dict) -> list[str]:
 
 
 def _confusion_lines(job: dict) -> list[str]:
-    m = job["metrics"]["test"]["subject"]
+    unit = job.get("primary_unit") or job.get("evaluation_unit") or "subject"
+    m = job["metrics"]["test"][unit]
     cm = m["confusion"]
     order = job["class_order"]
     return [
@@ -182,6 +188,9 @@ def _confusion_lines(job: dict) -> list[str]:
 
 def render_run_report(job: dict) -> str:
     data = job["data"]
+    unit = job.get("primary_unit") or job.get("evaluation_unit") or "subject"
+    grouping = job.get("grouping") or "subject"
+    group_label = "确认后的 subject" if grouping == "subject" else "单条录音（本库无说话人信息）"
     subject_counts = data["subject_counts"]
     label_counts = data["label_counts"]
     outputs = job.get("outputs", {})
@@ -205,16 +214,17 @@ def render_run_report(job: dict) -> str:
         f"- 训练：epochs `{job['training']['epochs']}`，batch `{job['training']['batch_size']}`，"
         f"lr `{job['training']['learning_rate']}`，优化器 `{job['training']['optimizer']}`，"
         f"seed `{job['seed']}`，权重 `{job['training'].get('class_weighting')}`",
-        f"- 早停/选模型：验证集 **subject balanced accuracy**，"
-        f"最佳 epoch `{job['best_epoch']}`（`{_fmt(job['best_val_subject_balanced_accuracy'])}`）",
+        f"- 早停/选模型：验证集 **{unit} balanced accuracy**，"
+        f"最佳 epoch `{job['best_epoch']}`"
+        f"（`{_fmt(job.get('best_val_balanced_accuracy', job.get('best_val_subject_balanced_accuracy')))}`）",
         f"- 运行状态：`{job['status']}`；开始 `{job['started_at']}`，结束 `{job['finished_at']}`",
         f"- 代码：`{job['code_version']}`，git `{(job.get('git') or {}).get('commit')}`"
         f"（dirty={(job.get('git') or {}).get('dirty')}）",
         "",
         "## 2. 数据与划分",
         "",
-        f"- 总录音：`{data['n_samples']}`；subject：`{data['n_subjects']}`",
-        "| split | 录音数 | subject 数 | 标签录音分布 |",
+        f"- 总录音：`{data['n_samples']}`；分组（group）：`{data['n_subjects']}`",
+        "| split | 录音数 | 分组数 | 标签录音分布 |",
         "| --- | ---: | ---: | --- |",
     ]
     for split in ("train", "val", "test"):
@@ -222,23 +232,23 @@ def render_run_report(job: dict) -> str:
                      f"{subject_counts[split]} | {label_counts[split]} |")
     lines += [
         "",
-        "- 划分按 `group_id`（确认后的 subject）进行，train/val/test 的人员集合互斥；"
-        "训练时标准化统计量只用 train 拟合。",
+        "- 划分按 `group_id` 进行：本库的分组单位是" + group_label +
+        "，train/val/test 的分组集合互斥；训练时标准化统计量只用 train 拟合。",
         "",
         "## 3. 指标",
         "",
         *(_metrics_table(job)),
         "",
-        f"正类：`{job['positive_class']}`；概率阈值 0.5；主评价单位：subject（同一人多条录音先等权平均）。",
+        f"正类：`{job['positive_class']}`；概率阈值 0.5；主评价单位：{unit}。",
         "",
-        "### Test 混淆矩阵（subject）",
+        f"### Test 混淆矩阵（{unit}）",
         "",
         *(_confusion_lines(job)),
         "",
         "## 4. 怎么读这个结果",
         "",
-        "- **subject 指标**是主指标：先把同一人的录音概率平均，再按人计算；"
-        "**window 指标**只用于诊断，不能拿来当最终成绩。",
+        "- **主评价单位**由任务的分组策略决定：有说话人时按人等权平均，"
+        "没有说话人时按录音；**window 指标**只用于诊断，不能拿来当最终成绩。",
         "- 本基线每条录音只取 1 个观察窗（head 4 s），因此 window 与 recording 指标相同；"
         "两者都保留，是为了以后多窗口协议不改报告结构。",
         "- 测试集从未参与早停或阈值选择；`test` 只在最后评估一次。",
@@ -246,7 +256,7 @@ def render_run_report(job: dict) -> str:
         "",
         "## 5. 限制",
         "",
-        f"- val 只有 `{subject_counts['val']}` 位说话人，单次结果的方差较大；"
+        f"- val 只有 `{subject_counts['val']}` 个分组，单次结果的方差较大；"
         "正式比较应多 seed 并报告不确定性。",
         "- MFCC 统计量丢弃了时间顺序信息，MLP 只能利用全局均值和标准差；"
         "这是第一条可复现基线，不代表方法上限。",
@@ -275,7 +285,8 @@ def render_run_report(job: dict) -> str:
             "",
             f"- epoch `{int(row['epoch'])}`：train_loss `{_fmt(float(row['train_loss']))}`，"
             f"val_loss `{_fmt(float(row['val_loss']))}`，"
-            f"val subject balanced accuracy `{_fmt(float(row['val_subject_balanced_accuracy']))}`",
+            f"val {unit} balanced accuracy "
+            f"`{_fmt(float(row.get(f'val_{unit}_balanced_accuracy', row.get('val_subject_balanced_accuracy'))))}`",
             "",
         ]
     return "\n".join(lines)

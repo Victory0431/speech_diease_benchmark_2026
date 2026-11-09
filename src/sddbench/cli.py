@@ -56,6 +56,8 @@ from .data.split import SplitError, assign_splits
 from .reporting.split_report import render_split
 from .data.admission import (
     AdmissionError,
+    GROUPING_SUBJECT,
+    GROUPINGS,
     STATUS_APPROVED,
     STATUS_LABEL_REVIEW_INCOMPLETE,
     STATUS_LABEL_REVIEW_MISSING,
@@ -92,6 +94,7 @@ from .modeling.features import FeatureLoadError
 from .modeling.trainer import RunError, load_run_data, run_experiment
 from .modeling.sweep import SweepError, load_sweep, run_sweep, summarize_runs
 from .results.contract import ResultsContractError
+from .results.aggregate import aggregate_runs
 from .results.publish import publish_all
 from .features.cache import FeatureCacheManager
 from .features.mfcc import (
@@ -174,6 +177,10 @@ def cmd_prepare(args) -> int:
     task_cfg = _load_task_config(repo_root, args.dataset, args.task)
     task_id = str(task_cfg.get("task_id") or f"{args.dataset}_v1")
     selection = dict(task_cfg.get("selection") or {})
+    grouping = str(task_cfg.get("grouping") or GROUPING_SUBJECT)
+    if grouping not in GROUPINGS:
+        raise ConfigError(f"task {task_id} grouping must be one of {GROUPINGS}, "
+                          f"got {grouping!r}")
     if args.mic:
         selection["mic"] = args.mic
 
@@ -195,9 +202,10 @@ def cmd_prepare(args) -> int:
                 COL_LABEL_RAW, COL_SAMPLE_RATE, COL_CHANNELS, COL_DURATION_DECODED_SEC,
                 COL_SHA256]
     all_rows = _read_scan(files_csv, required)
-    inventory = review_inventory(all_rows)
+    inventory = review_inventory(all_rows, grouping=grouping)
     print(f"[prepare] dataset={args.dataset} task={task_id} source={args.source} "
-          f"eligible={len(eligible_rows(all_rows))} speakers={len(inventory)}")
+          f"grouping={grouping} eligible={len(eligible_rows(all_rows))} "
+          f"groups={len(inventory)}")
 
     review_rel = (task_cfg.get("label_review") or {}).get(
         "file", f"label_review/{args.dataset}_label_review.csv")
@@ -219,8 +227,8 @@ def cmd_prepare(args) -> int:
         raise ConfigError(str(e)) from e
 
     selected, select_issues, select_blockers = select_rows(all_rows, selection)
-    selected_inventory = review_inventory(selected)
-    check = validate_review(review, selected_inventory)
+    selected_inventory = review_inventory(selected, grouping=grouping)
+    check = validate_review(review, selected_inventory, grouping=grouping)
 
     blockers: list[dict] = list(select_issues)
     if not review_exists:
@@ -248,7 +256,8 @@ def cmd_prepare(args) -> int:
     manifest_fp = ""
     if status == STATUS_APPROVED:
         manifest, manifest_issues = build_manifest(
-            selected, check["confirmed"], args.dataset, review_path, selection)
+            selected, check["confirmed"], args.dataset, review_path, selection,
+            grouping=grouping)
         errors = [i for i in manifest_issues if i.get("severity") == "error"]
         if errors:
             status = STATUS_ORIGIN_CONFLICT
@@ -277,14 +286,16 @@ def cmd_prepare(args) -> int:
         "n_speakers": len(inventory),
         "n_selected_speakers": len(selected_inventory),
         "n_manifest": len(manifest),
-        "n_subjects": len({m["subject_id"] for m in manifest}),
+        "n_subjects": (len({m["subject_id"] for m in manifest})
+                       if grouping == GROUPING_SUBJECT else 0),
+        "n_groups": len({m["group_id"] for m in manifest}),
         "n_origins": len({m["origin_id"] for m in manifest}),
     }
     job = {
         "job_id": job_id, "task_id": task_id, "dataset_id": args.dataset,
         "dataset_root": str(root), "scan_id": args.source,
         "scan_dir": str(scan_dir), "out_dir": str(out_dir),
-        "status": status, "selection": selection,
+        "status": status, "selection": selection, "grouping": grouping,
         "review_path": str(review_path), "review_exists": review_exists,
         "review": {
             "n_inventory": len(inventory),
@@ -332,7 +343,8 @@ def cmd_prepare(args) -> int:
         pd.DataFrame(manifest, columns=MANIFEST_COLUMNS).to_csv(
             out_dir / "manifest.csv", index=False)
         print(f"[prepare] APPROVED manifest rows={len(manifest)} "
-              f"subjects={counts['n_subjects']} labels={job['label_counts']}")
+              f"groups={counts['n_groups']} subjects={counts['n_subjects']} "
+              f"labels={job['label_counts']}")
         return 0
 
     print(f"[prepare] BLOCKED: {len(blockers)} blocker(s). "
@@ -527,6 +539,32 @@ def cmd_publish(args) -> int:
         print(f"[publish]   FAILED {item['run_dir']}: {item['error']}")
     print(f"[publish] leaderboard: {out_dir / 'leaderboard.csv'} / leaderboard.md")
     return 0 if not failures else 1
+
+
+def cmd_aggregate(args) -> int:
+    """D9: cross-seed mean/spread/CI (and local subject bootstrap)."""
+    repo_root = Path(args.repo_root).resolve() if args.repo_root else Path.cwd()
+    if args.runs:
+        runs_root = Path(args.runs).expanduser().resolve()
+    elif args.paths:
+        paths = load_paths(args.paths)
+        runs_root = Path(paths["workspace_root"]) / "runs"
+    else:
+        raise ConfigError("aggregate needs --runs or --paths")
+    if not runs_root.is_dir():
+        raise ConfigError(f"runs directory not found: {runs_root}")
+    out_dir = (Path(args.out).expanduser().resolve() if args.out
+               else repo_root / "results_summary")
+    frame = aggregate_runs(runs_root, out_dir, bootstrap=args.bootstrap, seed=args.seed)
+    print(f"[aggregate] groups={len(frame)} runs={int(frame['n_runs'].sum()) if len(frame) else 0}")
+    for _, row in frame.iterrows():
+        print(f"[aggregate]   {row['dataset']} / {row['experiment_id']} / "
+              f"{row['primary_unit']} / {row['signature']} / dropout={row['dropout']}: "
+              f"runs={row['n_runs']} "
+              f"bAcc={row['balanced_accuracy_mean']} "
+              f"CI=[{row['balanced_accuracy_ci_low']}, {row['balanced_accuracy_ci_high']}]")
+    print(f"[aggregate] index: {out_dir / 'aggregates.csv'} / aggregates.md")
+    return 0
 
 
 def cmd_inspect_file(args) -> int:
@@ -1045,6 +1083,17 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--paths", default=None, help="required only when --runs is omitted")
     sp.add_argument("--repo-root", default=None)
     sp.set_defaults(func=cmd_publish)
+
+    sp = sub.add_parser(
+        "aggregate",
+        help="cross-seed mean/spread/CI and local subject bootstrap")
+    sp.add_argument("--runs", default=None, help="runs directory (default: <workspace>/runs)")
+    sp.add_argument("--out", default=None, help="output directory (default: ./results_summary)")
+    sp.add_argument("--paths", default=None, help="required only when --runs is omitted")
+    sp.add_argument("--bootstrap", type=int, default=2000)
+    sp.add_argument("--seed", type=int, default=0)
+    sp.add_argument("--repo-root", default=None)
+    sp.set_defaults(func=cmd_aggregate)
 
     sp = sub.add_parser(
         "summarize",

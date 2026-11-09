@@ -1,0 +1,4 @@
+# D9：固定划分，只变训练 seed，量化优化随机性
+sweep_id: uaspeech_seed_ci_v1
+axes:
+  training.seed: [1, 2, 3, 4]

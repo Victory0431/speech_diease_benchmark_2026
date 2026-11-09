@@ -598,3 +598,150 @@ sddbench summarize --runs artifacts/runs --out results_summary --repo-root .
 - 两次 sweep run 的 `git_dirty=true`（跑它们时结果层代码还没提交），基线 run 为 `false`；
 - 契约目前只覆盖二分类；多分类与回归任务要等出现真实需求再扩版本号；
 - 没有多 seed 与置信区间，排序仍可能被一两位说话人左右（D9）。
+
+---
+
+## D9：多 seed、置信区间与换划分敏感性（2026-11-09）
+
+### 问题
+
+D8 的榜单每行都是一次运行。UAspeech 的 test 只有 6 位说话人，单行 0.833 既可能意味着
+"模型稳定在这个水平"，也可能只是这一次抽签的结果。需要区分两种波动：
+
+1. **训练随机性**：划分不变，只换 `training.seed`（初始化、batch 顺序、dropout mask）；
+2. **划分随机性**：只换 `split` 的 seed（哪些说话人进 train/val/test）。
+
+两者都不是新架构，也不需要改训练逻辑：seed 本来就是配置字段，划分 seed 本来就是
+`sddbench split --seed`。真正缺的是**把多个 run 读回来做统计**的工具。
+
+### 设计
+
+- run 分组键：`(dataset, experiment_id, primary_unit, 配置签名)`；
+  签名 = `model` + `training`（去掉 `seed`）+ `split_id` 的 JSON 哈希前 8 位。
+  这样 dropout 0/0.2/0.4、不同划分都不会被误合并；
+- 组内统计：主单位 test 指标的 mean/std(ddof=1)/median/min/max；
+- 跨 seed 区间：对 seed 值做百分位 bootstrap（默认 2000 次），**只描述波动**；
+- 单次运行内的不确定性：读取本地 `predictions_subjects.csv`，对 test 分组（人）有放回重采样，
+  给出 bAcc/AUROC 的 95% 区间；患者级行不发布，所以这一步只在本地做；
+- 换划分敏感性：用**不含 split_id** 的签名再分一次组，输出每个划分的均值、跨划分均值与 range；
+- 产物：`<out>/<dataset>/aggregates/<experiment>__<unit>__<签名>/`
+  下的 `aggregate.json|md` 与 `figures/seed_boxplot.png`、`figures/ci_compare.png`，
+  外加顶层 `aggregates.csv|md`、`split_sensitivity.csv|md`。
+
+### 代码改动
+
+- 新增 `src/sddbench/results/aggregate.py`：`load_runs`、`_signature`、`_group_runs`、
+  `bootstrap_ci`、`subject_bootstrap`、`aggregate_runs`、`_write_split_sensitivity`；
+- `src/sddbench/cli.py`：新增 `aggregate` 子命令
+  （`--runs/--out/--paths/--bootstrap/--seed/--repo-root`）；
+- `configs/sweeps/uaspeech_seed_ci.yaml`：训练 seed 轴 `[1, 2, 3, 4]`；
+- `tests/test_results.py`：跨 seed 统计与确定性、单 run 退化情形两项测试；
+- 没有改训练器、契约与数据层：`aggregate` 只读已存在的 run 包。
+
+### 实际执行
+
+```bash
+# 训练 seed：固定 split0，跑 seed 1–4（seed 0 已有）
+sddbench sweep --sweep configs/sweeps/uaspeech_seed_ci.yaml \
+    --experiment configs/experiments/uaspeech_mfcc_mlp_baseline.yaml \
+    --paths configs/paths.local.yaml
+
+# 划分 seed：split --seed 1/2/3，再各跑一次 training.seed=0
+sddbench split --task uaspeech_v1 --prepared <prepared_id> --seed 1 ...
+sddbench run --experiment configs/experiments/uaspeech_mfcc_mlp_baseline.yaml \
+    --set split_id=<split_id> --paths configs/paths.local.yaml
+
+sddbench aggregate --runs artifacts/runs --out results_summary --repo-root .
+sddbench publish  --runs artifacts/runs --out results_summary --repo-root .
+```
+
+- `aggregate`：`groups=6 runs=10`，0 失败；`python -m pytest tests -q` → **67 passed**；
+- `publish`：10 个 run 全部归档，leaderboard 重建；`results_summary` 约 2.4 MB。
+
+### 结果（UAspeech，dropout 0.2，head 4 s，MFCC20+stats）
+
+| 实验轴 | 运行 | test subject bAcc | AUROC |
+| --- | --- | --- | --- |
+| 训练 seed 0–4（split0） | 5 | 全部 **0.833**，std 0.000 | 0.889–1.000（mean 0.911） |
+| 划分 seed 1/2/3（training.seed=0） | 3 | 全部 **1.000** | 1.000 |
+| dropout 0 / 0.2 / 0.4（split0，seed 0） | 3 | 全部 0.833 | 0.889 |
+
+- 跨划分：across-split mean **0.896**，range **0.167**（0.833 → 1.000）；
+- 单次运行的 test 分组 bootstrap：n=6 人，bAcc 95% 区间 **[0.500, 1.000]**；
+- 解读：训练随机性在当前配置下几乎为零；换一批说话人直接改变 1/6 的判定，
+  位移远大于 dropout 差异。**当前瓶颈是测试单元数量，不是超参。**
+
+### 边界
+
+- bootstrap 区间是描述性的，不做显著性宣称；6 个单元也不足以谈"显著"；
+- 训练 seed 结果完全一致，部分原因是固定单线程 CPU 且早停在很小 epoch，不能外推到 GPU；
+- 划分敏感性表里每个划分只有 1 次运行（seed 0），换划分 × 换训练 seed 的联合网格尚未铺开；
+- KCL 与无 speaker 库还未做同样的多 seed 统计，等 D11 接库后补。
+
+---
+
+## D10：无说话人数据集的健壮性（grouping 策略，2026-11-09）
+
+### 问题
+
+D4/D5/D6 把"按说话人隔离"写死在三处：准入要求 `confirmed_subject_id`、
+划分要求 `group_id` 非空、训练只接受 `evaluation.unit=subject`。这对 UAspeech/KCL 没问题，
+但很多公开库只是 `Healthy/`、`Disease/` 两个文件夹，没有任何说话人元数据。
+硬要求 speaker 会让这类库在准入门槛前就死掉。
+
+### 设计：把"隔离单位"显式化
+
+数据集配置新增 `grouping`：
+
+| grouping | group_id | 主评价单位 | 含义 |
+| --- | --- | --- | --- |
+| `subject`（默认） | `数据集:确认后的subject` | `subject` | 同一人的所有录音只在 train/val/test 之一 |
+| `file` | `数据集:origin` | `recording` | 每条录音自成一组；无法排除同一人跨划分 |
+
+关键约定：
+
+- `grouping` 是**声明式**的，必须由人写进数据集配置，不靠猜；
+- `grouping=file` 时 `evaluation.unit` 必须是 `recording`，训练脚本会拒绝不一致的组合；
+- 准入仍然要求人工确认标签（文件夹级确认），只是不再要求 `confirmed_subject_id`；
+- 契约升到 v1.1，增加 `primary_unit` 字段；`subject` 指标块依然计算，
+  但当 `grouping=file` 时它等于 recording，仅用于兼容同一套报告结构；
+- leaderboard 增加 `primary_unit` 列，**不同单位不直接比较**，只并列展示；
+- 数据卡与榜单都写明：recording 单位的指标无法排除同一人跨划分的乐观偏差。
+
+### 代码改动
+
+- `configs/datasets/*.yaml`：新增 `grouping: subject`；
+- `data/admission.py`：`review_inventory`/`validate_review`/`build_manifest` 接受
+  `grouping`；`file` 模式下按 `(speaker="", directory_group)` 做文件夹级复核，
+  `group_id=数据集:origin`，`subject_id` 留空；
+- `cli.py prepare`：从任务配置读取 `grouping`，校验取值，写进 job；
+- `data/split.py`：错误信息改为 group 语义，`split.json` 增加 `n_groups`；
+- `modeling/trainer.py`：`evaluation.unit` 支持 `recording`；
+  `grouping=file` 与 `unit=subject` 的组合直接拒绝；早停/选模型按主单位计算；
+  history 列名改为 `val_{unit}_balanced_accuracy`，run/metrics 记录
+  `evaluation_unit`、`primary_unit`、`grouping`；
+- `modeling/report.py`：主指标、混淆矩阵、ROC、学习曲线、结论文字按 `primary_unit` 取块，
+  不再硬编码 subject；
+- `results/contract.py`：v1.1，`evaluation_unit`/`primary_unit` ∈ {subject, recording}，
+  两者必须一致；旧 run（无 `primary_unit`）在发布时按 `evaluation_unit` 补齐；
+- `results/publish.py`：leaderboard 增加 `primary_unit` 与 `primary_*` 指标列，
+  排序改用 `primary_balanced_accuracy`，
+  同时保留 subject/recording/window 三套列便于审计。
+
+### 测试
+
+新增 3 项，合计 **67 passed**（D9 后会再增加）：
+
+1. `test_file_grouping_needs_no_speaker_metadata`：无 speaker 的三条录音，
+   文件夹级复核通过，`group_id` 按 origin 生成，`subject_id` 为空；
+2. `test_recording_unit_run_is_supported`：端到端训练 `evaluation.unit=recording`，
+   metrics 的 `primary_unit` 为 recording，history 列名正确；
+3. `test_contract_accepts_recording_unit_and_rejects_mismatch`：
+   v1.1 接受 recording，拒绝 unit 与 primary 不一致、拒绝未知单位。
+
+### 边界
+
+- 这是"能跑通 + 明确标注局限"，不是"消除了泄漏"；
+- `grouping=file` 的结论不能和 `grouping=subject` 的库直接排名，
+  榜单只保证口径可见、可追溯；
+- 真实的无 speaker 数据集尚未接入，等 D11 接库时验证。

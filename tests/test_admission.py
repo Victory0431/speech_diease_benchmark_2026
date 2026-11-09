@@ -167,6 +167,52 @@ def test_subject_conflict_blocks(scan_workspace):
     assert not (out / "manifest.csv").exists()
 
 
+def test_file_grouping_needs_no_speaker_metadata():
+    from sddbench.data.schema import (
+        COL_CATEGORY,
+        COL_DIRECTORY_GROUP,
+        COL_ORIGIN_ID,
+        COL_PARSE_STATUS,
+        COL_RELATIVE_PATH,
+        COL_SPEAKER_TOKEN,
+        CATEGORY_AUDIO,
+    )
+
+    rows = []
+    for rel in ("Control/a.wav", "Control/b.wav", "Disease/c.wav"):
+        rows.append({
+            COL_RELATIVE_PATH: rel,
+            COL_CATEGORY: CATEGORY_AUDIO,
+            COL_DECODE_STATUS: "ok",
+            COL_PARSE_STATUS: "ok",
+            COL_SPEAKER_TOKEN: "",
+            COL_DIRECTORY_GROUP: rel.split("/")[0],
+            COL_ORIGIN_ID: rel,
+        })
+
+    inventory = review_inventory(rows, grouping="file")
+    assert {(r["speaker_token"], r["directory_group"]) for r in inventory} == {
+        ("", "Control"), ("", "Disease")}
+
+    review = {
+        ("", "Control"): {"confirmed_subject_id": "", "confirmed_label": "control",
+                          "review_status": "confirmed"},
+        ("", "Disease"): {"confirmed_subject_id": "", "confirmed_label": "disorder",
+                          "review_status": "confirmed"},
+    }
+    check = validate_review(review, inventory, grouping="file")
+    assert not check["blocking"]
+
+    manifest, issues = build_manifest(
+        rows, check["confirmed"], "demo", Path("demo_review.csv"),
+        {"require_mic": False}, grouping="file")
+    assert not [i for i in issues if i["severity"] == "error"]
+    assert all(m["subject_id"] == "" for m in manifest)
+    assert {m["group_id"] for m in manifest} == {
+        "demo:Control/a.wav", "demo:Control/b.wav", "demo:Disease/c.wav"}
+    assert {m["label"] for m in manifest} == {"control", "disorder"}
+
+
 def test_kcl_adapter_reuses_admission(tmp_path):
     root = tmp_path / "kcl"
     (root / "Healthy").mkdir(parents=True)

@@ -251,5 +251,6 @@
   },
   "warnings": [],
   "config_hash": "82e4078976439b308bfbe809da294ff259fad82f849d00b22b380a4b6721353a",
-  "contract_version": "1.0"
+  "contract_version": "1.1",
+  "primary_unit": "subject"
 }

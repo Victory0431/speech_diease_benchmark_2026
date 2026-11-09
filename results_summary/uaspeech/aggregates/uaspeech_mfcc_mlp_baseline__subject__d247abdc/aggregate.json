@@ -1,0 +1,156 @@
+{
+  "aggregate_version": "1.0",
+  "dataset": "uaspeech",
+  "experiment_id": "uaspeech_mfcc_mlp_baseline",
+  "primary_unit": "subject",
+  "signature": "d247abdc",
+  "split_id": "20261109T193524+0800_seed0_f7eb7f76",
+  "dropout": 0.0,
+  "contract_version": null,
+  "seeds": [
+    0
+  ],
+  "n_runs": 1,
+  "primary": {
+    "balanced_accuracy": {
+      "mean": 0.8333333333333333,
+      "std": 0.0,
+      "median": 0.8333333333333333,
+      "min": 0.8333333333333333,
+      "max": 0.8333333333333333,
+      "ci95_runs": [
+        0.8333333333333333,
+        0.8333333333333333
+      ],
+      "n": 1
+    },
+    "auroc": {
+      "mean": 0.8888888888888888,
+      "std": 0.0,
+      "median": 0.8888888888888888,
+      "min": 0.8888888888888888,
+      "max": 0.8888888888888888,
+      "ci95_runs": [
+        0.8888888888888888,
+        0.8888888888888888
+      ],
+      "n": 1
+    },
+    "sensitivity": {
+      "mean": 1.0,
+      "std": 0.0,
+      "median": 1.0,
+      "min": 1.0,
+      "max": 1.0,
+      "ci95_runs": [
+        1.0,
+        1.0
+      ],
+      "n": 1
+    },
+    "specificity": {
+      "mean": 0.6666666666666666,
+      "std": 0.0,
+      "median": 0.6666666666666666,
+      "min": 0.6666666666666666,
+      "max": 0.6666666666666666,
+      "ci95_runs": [
+        0.6666666666666666,
+        0.6666666666666666
+      ],
+      "n": 1
+    },
+    "precision": {
+      "mean": 0.75,
+      "std": 0.0,
+      "median": 0.75,
+      "min": 0.75,
+      "max": 0.75,
+      "ci95_runs": [
+        0.75,
+        0.75
+      ],
+      "n": 1
+    },
+    "f1": {
+      "mean": 0.8571428571428571,
+      "std": 0.0,
+      "median": 0.8571428571428571,
+      "min": 0.8571428571428571,
+      "max": 0.8571428571428571,
+      "ci95_runs": [
+        0.8571428571428571,
+        0.8571428571428571
+      ],
+      "n": 1
+    },
+    "average_precision": {
+      "mean": 0.9166666666666666,
+      "std": 0.0,
+      "median": 0.9166666666666666,
+      "min": 0.9166666666666666,
+      "max": 0.9166666666666666,
+      "ci95_runs": [
+        0.9166666666666666,
+        0.9166666666666666
+      ],
+      "n": 1
+    },
+    "log_loss": {
+      "mean": 0.43887080296230313,
+      "std": 0.0,
+      "median": 0.43887080296230313,
+      "min": 0.43887080296230313,
+      "max": 0.43887080296230313,
+      "ci95_runs": [
+        0.43887080296230313,
+        0.43887080296230313
+      ],
+      "n": 1
+    },
+    "brier": {
+      "mean": 0.13598898665880285,
+      "std": 0.0,
+      "median": 0.13598898665880285,
+      "min": 0.13598898665880285,
+      "max": 0.13598898665880285,
+      "ci95_runs": [
+        0.13598898665880285,
+        0.13598898665880285
+      ],
+      "n": 1
+    }
+  },
+  "runs": [
+    {
+      "run_id": "20261109T202353+0800_uaspeech_mfcc_mlp_baseline_s0_f884b4",
+      "seed": 0,
+      "best_epoch": 4,
+      "test_groups": 6,
+      "balanced_accuracy": 0.8333333333333333,
+      "auroc": 0.8888888888888888,
+      "sensitivity": 1.0,
+      "specificity": 0.6666666666666666,
+      "precision": 0.75,
+      "f1": 0.8571428571428571,
+      "average_precision": 0.9166666666666666,
+      "log_loss": 0.43887080296230313,
+      "brier": 0.13598898665880285,
+      "subject_bootstrap": {
+        "n_groups": 6,
+        "balanced_accuracy_ci95": [
+          0.5,
+          1.0
+        ],
+        "auroc_ci95": [
+          0.5,
+          1.0
+        ]
+      }
+    }
+  ],
+  "notes": [
+    "ci95_runs is a percentile bootstrap over seeds (descriptive only).",
+    "subject_bootstrap resamples test groups locally and is never published."
+  ]
+}

@@ -5,6 +5,7 @@ dataset_id: uaspeech
 adapter: uaspeech
 task_version: 1
 admission: pending_review          # 人工完成 label_review 后才能改为 approved（D4）
+grouping: subject                  # subject：按确认后的说话人隔离；file：每条录音自成一组（无说话人元数据时）
 
 naming:
   # <speaker_token>_<block_token>_<prompt_token>_<mic_token>.wav

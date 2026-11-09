@@ -302,3 +302,70 @@
   2. 临时删掉某归档 run 下 `metrics.json` 的 `auroc` 再跑 `publish`，确认失败被记录且其余 run 仍发布；
   3. 确认 `git status` 中没有任何 `*.pt`、`predictions_*.csv` 或 `manifest.csv`。
 - 结论：待人工验收
+
+## D9（多 seed、置信区间与换划分敏感性）——待验收
+
+- 日期：2026-11-09
+- 施工内容：新增 `aggregate` 命令与 `results/aggregate.py`；
+  按配置签名分组，输出跨 seed 均值/标准差/极值、百分位 bootstrap 区间、
+  test 分组 bootstrap、箱线图与换划分敏感性表；不改训练与契约。
+- 实际执行：
+  - `sddbench sweep`（`configs/sweeps/uaspeech_seed_ci.yaml`，training.seed 1–4）→
+    `completed=4 failed=0`；
+  - `sddbench split --seed 1/2/3` 后各跑一次 `training.seed=0` → 3 个 run 全部成功；
+  - `sddbench aggregate --runs artifacts/runs --out results_summary --repo-root .`
+    → `groups=6 runs=10`，0 失败；
+  - `sddbench publish --runs artifacts/runs --out results_summary --repo-root .`
+    → 10 个 run 全部归档，leaderboard 重建；
+  - `python -m pytest tests -q` → **67 passed**。
+- 证据路径：
+  - `results_summary/aggregates.csv`、`aggregates.md`；
+  - `results_summary/split_sensitivity.csv`、`split_sensitivity.md`；
+  - `results_summary/uaspeech/aggregates/uaspeech_mfcc_mlp_baseline__subject__b97ddc38/`
+    （`aggregate.json|md`、`figures/seed_boxplot.png`、`figures/ci_compare.png`）；
+  - `results_summary/leaderboard.md`（10 行，含 3 个换划分 run）。
+- 通过项（自检）：
+  - 同一配置的 5 个训练 seed 被合并为一组，dropout 0/0.4 与 3 个换划分 run 各自独立成组，
+    没有误合并；
+  - 训练 seed 0–4 的 test subject bAcc 全部 0.833（std 0.000），AUROC 0.889–1.000；
+  - 换划分后 split1/2/3 的 test subject bAcc 全部 1.000；
+  - 跨划分均值 0.896、range 0.167；单次运行 test 分组 bootstrap（n=6）区间 [0.500, 1.000]；
+  - `aggregate` 重复执行结果一致（测试覆盖确定性）；
+  - 归档中不含 `predictions_*.csv` 与 `best.pt`，患者级重采样只在本地进行。
+- 已知限制：区间为描述性；每个换划分 run 只有 1 个训练 seed；
+  同一划分 × 多训练 seed 的联合网格尚未铺开；KCL 尚未做多 seed。
+- 验收步骤建议：
+  1. 打开 `results_summary/aggregates.md`，确认 5-seed 行的 `bAcc mean=0.833`、`CI=[0.833, 0.833]`；
+  2. 打开 `split_sensitivity.md`，确认 `across-split mean=0.896`、`range=0.167`；
+  3. 打开 `.../aggregate.md` 的逐 run 表，与 `artifacts/runs/<run_id>/metrics.json` 对照；
+  4. 重跑 `sddbench aggregate`，确认 `aggregates.csv` 内容不变。
+- 结论：待人工验收
+
+## D10（无说话人数据集：grouping 策略）——待验收
+
+- 日期：2026-11-09
+- 施工内容：`grouping: subject|file`、`evaluation.unit: recording`、
+  契约 v1.1（`primary_unit`）、leaderboard 增加主单位列、
+  admission 文件夹级复核、split/trainer/report 的 group 语义。
+- 实际执行：
+  - `python -m pytest tests -q` → 67 passed；
+  - 用旧 run 重新 `publish` → 3 个全部通过，leaderboard 版本显示 `1.1`；
+  - `run --dry-run` 在 `--set split_id=...` 下正常（说明划分可替换）。
+- 证据路径：
+  - `configs/datasets/uaspeech_v1.yaml`、`parkinson_kcl_v1.yaml` 的 `grouping` 字段；
+  - `results_summary/leaderboard.md` 的 `primary_unit` 列；
+  - `tests/test_admission.py::test_file_grouping_needs_no_speaker_metadata`；
+  - `tests/test_modeling.py::test_recording_unit_run_is_supported`。
+- 通过项（自检）：
+  - 没有 speaker 时，prepare 只要求文件夹级标签确认，不伪造 subject；
+  - `group_id` 非空，split 能按录音隔离；
+  - `grouping=file` + `unit=subject` 会被训练脚本拒绝，避免"假按人隔离"；
+  - 契约拒绝未知单位，且拒绝 `primary_unit != evaluation_unit`；
+  - leaderboard 同时保留 subject/recording/window 三套列，且标记主单位。
+- 已知限制：真实无 speaker 数据集尚未接入；recording 单位仍可能存在
+  "同一人跨划分"的乐观偏差，报告与榜单均已注明。
+- 验收步骤建议：
+  1. 读 `configs/datasets/uaspeech_v1.yaml`，确认 `grouping: subject` 与现状一致；
+  2. 跑 `pytest tests/test_admission.py -q` 与 `tests/test_modeling.py -q`；
+  3. 打开 `results_summary/leaderboard.md`，确认 `primary_unit` 列全部为 `subject`。
+- 结论：待人工验收

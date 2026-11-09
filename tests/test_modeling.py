@@ -209,6 +209,21 @@ def test_end_to_end_run_writes_result_pack(tmp_path):
                 & set(subject_pred.loc[subject_pred.split == "test", "subject_id"]))
 
 
+def test_recording_unit_run_is_supported(tmp_path):
+    repo, workspace, runs = _build_workspace(tmp_path)
+    cfg = load_experiment(_experiment_cfg(tmp_path))
+    cfg["evaluation"]["unit"] = "recording"
+    job = run_experiment(cfg, workspace, repo, run_root=runs)
+    metrics = json.loads((Path(job["out_dir"]) / "metrics.json").read_text(
+        encoding="utf-8"))
+    assert metrics["evaluation_unit"] == "recording"
+    assert metrics["primary_unit"] == "recording"
+    assert metrics["metrics"]["test"]["recording"]["n"] == 8
+    assert job["best_val_balanced_accuracy"] == job["best_val_subject_balanced_accuracy"]
+    assert "val_recording_balanced_accuracy" in pd.read_csv(
+        Path(job["out_dir"]) / "history.csv").columns
+
+
 def test_person_leakage_is_rejected(tmp_path):
     repo, workspace, runs = _build_workspace(tmp_path, leak=True)
     cfg = load_experiment(_experiment_cfg(tmp_path))

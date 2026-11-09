@@ -62,10 +62,10 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 命令 | `inspect-file`（单文件核查）、`stats`（quick/full 统计，可断点续扫）、`dataset-report`（重建报告）、`extract-features`（窗口索引 + MFCC 统计 + 分片缓存）、`prepare`（标签复核 + 人员隔离清单，未确认则阻断）、`split`（按说话人隔离的分层划分）、`run`（冻结特征 MLP 训练 + 结果包）、`sweep`（参数网格）、`summarize`（同库内跨运行汇总）、`publish`（按结果契约归档 + 跨数据集榜单） |
-| 数据层模块 | `scan`（枚举分类）、`decoders`（probe+解码，soundfile 优先、ffprobe 兜底）、`audit`（并行审计+质量摘要）、`stats`（聚合）、`adapters/uaspeech` + `adapters/parkinson_kcl`（命名与归属解释）、`audio`（通道/裁剪/重采样）、`windows`（位置规则+`view_hash`）、`prepare`（确定性分层抽样）、`admission`（复核/隔离/批准清单）、`split`（人员隔离分层划分）、`features/mfcc`（固定配方）、`features/cache`（分片/续算/复用）、`modeling/*`（特征读取、指标、MLP、实验配置、训练、报告、扫描/汇总）、`results/*`（结果契约、发布白名单、跨数据集 leaderboard） |
+| 命令 | `inspect-file`（单文件核查）、`stats`（quick/full 统计，可断点续扫）、`dataset-report`（重建报告）、`extract-features`（窗口索引 + MFCC 统计 + 分片缓存）、`prepare`（标签复核 + 人员隔离清单，未确认则阻断）、`split`（按 group 隔离的分层划分）、`run`（冻结特征 MLP 训练 + 结果包）、`sweep`（参数网格）、`summarize`（同库内跨运行汇总）、`publish`（按结果契约归档 + 跨数据集榜单）、`aggregate`（多 seed 均值/区间） |
+| 数据层模块 | `scan`（枚举分类）、`decoders`（probe+解码，soundfile 优先、ffprobe 兜底）、`audit`（并行审计+质量摘要）、`stats`（聚合）、`adapters/uaspeech` + `adapters/parkinson_kcl`（命名与归属解释）、`audio`（通道/裁剪/重采样）、`windows`（位置规则+`view_hash`）、`prepare`（确定性分层抽样）、`admission`（复核/隔离/批准清单）、`split`（人员隔离分层划分）、`features/mfcc`（固定配方）、`features/cache`（分片/续算/复用）、`modeling/*`（特征读取、指标、MLP、实验配置、训练、报告、扫描/汇总）、`results/*`（结果契约、发布白名单、跨数据集 leaderboard、多 seed 聚合） |
 | 产物 | `files.csv`、`statistics.json`、`meta.json`、`issues.csv`、`length_candidates*.csv`、`report.md`、`figures/*.png`；D2/D3 追加 `windows.csv`、`job.json`、`inspection.md`、可审听预览、`cache/features/mfcc_stats/<feature_key>/`（`meta.json` + `index.csv` + `shard_*.npz`）；D4 追加 `label_review_status.csv`、`admission.json`、`admission.md`、通过时才有 `manifest.csv`；D5 追加 `split.csv`、`split.json`、`split.md`；D6 追加 `runs/<run_id>/`（`run.json`、`metrics.json`、`predictions_*`、`best.pt`、`report.md`、`figures/`）；D8 追加 `results_summary/<dataset>/<run_id>/`（契约指标、逐类指标、报告、配置、清洗后的 `run_meta.json`、`figures/*.png`）与顶层 `leaderboard.csv/md` |
-| 测试 | 62 项合成数据测试全绿（不含任何真实患者音频） |
+| 测试 | 67 项合成数据测试全绿（不含任何真实患者音频） |
 | 设计约束 | 适配器不碰解码；统计只报事实不自动选参数；标签未核验前不产出分类清单 |
 
 ### UAspeech 全库统计结果（full 模式，逐条解码）
@@ -114,6 +114,21 @@
 
 > 这是**流程基线**，不是调优结果：test 只有 6 位说话人，换 seed 可能变成 4/6 或 6/6。
 > 它的价值是证明"数据 → 特征 → 模型 → 指标 → 结果包"已经闭环、可复现、可调参。
+
+### D9 多 seed 与换划分（同一 UAspeech 配置）
+
+| 项 | 结果 |
+| --- | --- |
+| 训练 seed（固定 split0） | seed 0–4 共 5 次，test 人级 bAcc **全部 0.833**，std 0.000，AUROC 0.889–1.000 |
+| 划分 seed（固定 training.seed=0） | split1/2/3 的 test 人级 bAcc **全部 1.000** |
+| 跨划分均值与位移 | 0.833 → 1.000，across-split mean 0.896，range **0.167** |
+| 单次运行内的 test 分组 bootstrap | n=6 人，bAcc 95% 区间 **[0.500, 1.000]** |
+| 超参对比 | dropout 0 / 0.2 / 0.4 均为 0.833，差异小于划分位移 |
+| 结论 | 当前瓶颈是测试单元只有 6 人，不是训练随机性或超参；调参之前应先扩测试单元 |
+
+> 详细表格：`results_summary/aggregates.md`、`results_summary/split_sensitivity.md`；
+> 每组的 `aggregate.json|md` 与箱线图在 `results_summary/uaspeech/aggregates/`。
+> 这两个文件是"描述波动"，不是显著性检验。
 
 ### 必须人工核查的发现
 
@@ -184,6 +199,9 @@ sddbench summarize --runs artifacts/runs --out results_summary --repo-root .
 # D8：按结果契约归档（默认 <repo>/results_summary），并重建跨数据集榜单
 sddbench publish --runs artifacts/runs --out results_summary --repo-root .
 
+# D9：多 seed 汇总（只读本地 run 包，含 test 分组 bootstrap 与箱线图）
+sddbench aggregate --runs artifacts/runs --out results_summary --repo-root .
+
 # 第二个数据集：统计 + 4 s 技术验证
 sddbench stats --dataset parkinson_kcl --mode full --paths configs/paths.local.yaml
 sddbench extract-features --dataset parkinson_kcl --source <KCL_SCAN_ID> \
@@ -239,7 +257,7 @@ sddbench extract-features --dataset parkinson_kcl --source <KCL_SCAN_ID> \
 │   ├── prepared/<task>/...    # 准入证据（manifest.csv 本机再生，不入库）
 │   ├── splits/<task>/...      # 划分结果 split.csv/json/md
 │   └── runs/<run_id>/...      # 模型结果包（权重/预测/指标/图/报告，本机）
-├── results_summary/           # 入库的结果归档：<dataset>/<run_id>/ + leaderboard.csv/md
+├── results_summary/           # 入库的结果归档：<dataset>/<run_id>/ + leaderboard + aggregates
 │                              # 只含聚合指标/报告/配置/小图，无权重与逐录音数据
 └── tests/                     # 合成数据 fixture 测试
 ```
@@ -262,6 +280,7 @@ sddbench extract-features --dataset parkinson_kcl --source <KCL_SCAN_ID> \
 | `artifacts/runs/**` | ❌ | 含权重、逐窗口预测与患者级输入快照；只把指标摘要写进文档/汇总 |
 | `results_summary/<dataset>/<run_id>/` 的 `metrics.json`、`metrics_per_class.csv`、`report.md`、`config.yaml`、`run_meta.json`、`figures/*.png` | ✅ | D8 归档：小体积、已清洗（无绝对路径/患者级清单），可重算 leaderboard |
 | `results_summary/leaderboard.csv`、`leaderboard.md`、`summary.csv`、`summary.md` | ✅ | 聚合指标，KB 级，可由各 run 的 `metrics.json` 重算 |
+| `results_summary/aggregates.csv`、`aggregates.md`、`<dataset>/aggregates/` | ✅ | 多 seed 汇总：均值、区间、箱线图；**不含**逐人预测与权重 |
 
 `.gitignore` 对 `artifacts/` 采用**白名单**：默认全部忽略，只逐个放行上面那份总览清单，
 再加一条"大文件兜底"规则，避免以后误提交。
@@ -278,30 +297,40 @@ sddbench extract-features --dataset parkinson_kcl --source <KCL_SCAN_ID> \
   `extract-features`（窗口索引 + MFCC 统计 + 缓存，支持 `--mic`）、
   `prepare`（标签复核/人员隔离/批准清单）、`split`（按人员隔离的分层划分）、
   `run`（冻结特征 MLP 训练与结果包）、`sweep`（参数网格）、`summarize`（同库内跨运行汇总）、
-  `publish`（结果契约校验 + 小体积归档 + 跨数据集 leaderboard）。
-- **未实现**：`cache`、`dashboard`；多 seed 置信区间、第二个数据集的训练接入尚未开始。
-- **结果契约 v1.0**：train/val/test × window/recording/subject，
+  `publish`（结果契约校验 + 小体积归档 + 跨数据集 leaderboard）、
+  `aggregate`（多 seed 均值/区间 + test 分组 bootstrap）。
+- **未实现**：`cache`、`dashboard`；第二个数据集的训练接入尚未开始。
+- **结果契约 v1.1**：train/val/test × window/recording/subject，
   指标含 accuracy、balanced accuracy、sensitivity、specificity、precision、F1、
-  AUROC、average precision、log loss、Brier 与混淆矩阵；主指标固定为 test/说话人级。
-  缺项会直接报错，不允许静默产出"半套结果"。
+  AUROC、average precision、log loss、Brier 与混淆矩阵；主评价单位由 `primary_unit`
+  标记（有说话人为 subject，没有说话人为 recording）。缺项会直接报错，
+  不允许静默产出"半套结果"。
 - **准入现状**：UAspeech 已按人工确认的目录标签与 **M3** 麦克风通过准入，
   得到 21,126 行 manifest（28 人）；KCL 仍是 `pending`，真实运行被阻断。
   UAspeech 选 M3 是工程基线（M2 在 Healthy 组缺录音），不是研究结论。
+- **分组策略**：数据集配置里的 `grouping` 决定"谁和谁必须待在同一侧"。
+  `subject`（默认）按确认后的说话人隔离；`file` 用于没有说话人元数据的库，
+  每条录音自成一组，主评价单位只能用 `recording`，并明确记录"无法排除同一人跨划分"。
+  契约 v1.1 用 `primary_unit` 标记主评价单位，榜单不跨单位直接比较。
 - **不做的事**：不自动选观察长度、不自动选采样率、不自动选麦克风、不把目录名当标签、
   不删除任何"疑似异常"样本。这些都需要人工依据 `report.md` 的决策点拍板。
-- **状态**：阶段0、D1–D8 均"待人工验收"（见 `docs/acceptance_log.md`）。
+- **状态**：阶段0、D1–D10 均"待人工验收"（见 `docs/acceptance_log.md`）。
   施工细节与命令证据见 `docs/construction_log.md`。
 
 ## 六、下一步
 
-1. 人工验收 D1–D8：对照 `artifacts/inventory/<dataset>/<scan_id>/report.md`、
+1. 人工验收 D1–D10：对照 `artifacts/inventory/<dataset>/<scan_id>/report.md`、
    `artifacts/feature_jobs/<job_id>/inspection.md`、
    `artifacts/prepared/<task_id>/<job_id>/admission.md`、
    `artifacts/splits/<task_id>/<split_id>/split.md`、
-   `artifacts/runs/<run_id>/report.md`、缓存 `index.csv` 与
-   `results_summary/leaderboard.md` 复核数字与决策点。
-2. 多 seed 与不确定性（D9）：同一配置跑 3–5 个 seed，按人员重采样估计置信区间，
-   再决定哪些超参差异值得继续追。
-3. 接入更多数据集（D10）：每个库只需适配器 + 标签复核 + prepared/split ID，
+   `artifacts/runs/<run_id>/report.md`、缓存 `index.csv`、
+   `results_summary/leaderboard.md` 与 `results_summary/aggregates.md` 复核数字与决策点。
+2. 多 seed 与不确定性（D9，已完成）：`aggregate` 读取本地 run 包，输出跨 seed 均值/区间、
+   箱线图、单次运行内的 test 分组 bootstrap 与换划分敏感性表。
+   当前结论：训练 seed 无波动，换划分位移 0.167。
+3. 无说话人数据集支持（D10，已完成）：`grouping: file` + `evaluation.unit: recording`，
+   让只有标签文件夹的库也能走完整流水线（待真实库验证）。
+4. 接入更多数据集（D11）：每个库只需适配器 + 标签复核 + prepared/split ID，
    再复制一份实验配置；KCL 的标签复核与 ID22 命名问题在接入时综合处理。
-4. 汇总页（D11）：把 `results_summary` 渲染成一页可浏览的 HTML/表格。
+   每个新库都要判断 `grouping`，并至少跑一次多 seed 汇总。
+5. 汇总页（D12）：把 `results_summary` 渲染成一页可浏览的 HTML/表格。

@@ -1,0 +1,5 @@
+dataset,experiment_id,primary_unit,signature,split_id,n_runs,seeds,balanced_accuracy_mean,balanced_accuracy_min,balanced_accuracy_max,across_splits_mean,across_splits_range
+uaspeech,uaspeech_mfcc_mlp_baseline,subject,7e69fedb,20261109T193524+0800_seed0_f7eb7f76,5,0/1/2/3/4,0.8333333333333333,0.8333333333333333,0.8333333333333333,0.8958333333333333,0.16666666666666674
+uaspeech,uaspeech_mfcc_mlp_baseline,subject,7e69fedb,20261109T230224+0800_seed1_58e9c78e,1,0,1.0,1.0,1.0,0.8958333333333333,0.16666666666666674
+uaspeech,uaspeech_mfcc_mlp_baseline,subject,7e69fedb,20261109T230227+0800_seed2_9a586a2d,1,0,1.0,1.0,1.0,0.8958333333333333,0.16666666666666674
+uaspeech,uaspeech_mfcc_mlp_baseline,subject,7e69fedb,20261109T230229+0800_seed3_9a18fbd8,1,0,1.0,1.0,1.0,0.8958333333333333,0.16666666666666674

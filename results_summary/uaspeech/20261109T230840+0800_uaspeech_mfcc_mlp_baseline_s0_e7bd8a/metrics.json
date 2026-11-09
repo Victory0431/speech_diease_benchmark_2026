@@ -1,0 +1,257 @@
+{
+  "run_id": "20261109T230840+0800_uaspeech_mfcc_mlp_baseline_s0_e7bd8a",
+  "task_id": "uaspeech_v1",
+  "dataset": "uaspeech",
+  "class_order": [
+    "control",
+    "disorder"
+  ],
+  "evaluation_unit": "subject",
+  "primary_unit": "subject",
+  "grouping": "subject",
+  "positive_class": "disorder",
+  "primary_metric": "balanced_accuracy",
+  "primary_split": "test",
+  "probability_threshold": 0.5,
+  "metrics": {
+    "train": {
+      "window": {
+        "n": 12711,
+        "positive_rate": 0.48147274014632996,
+        "confusion": {
+          "tn": 6213,
+          "fp": 378,
+          "fn": 325,
+          "tp": 5795
+        },
+        "accuracy": 0.9446935724962631,
+        "balanced_accuracy": 0.9447722458730117,
+        "sensitivity": 0.9468954248366013,
+        "specificity": 0.942649066909422,
+        "precision": 0.9387655920946055,
+        "npv": 0.9502906087488528,
+        "f1": 0.9428129829984543,
+        "negative_precision": 0.9502906087488528,
+        "negative_f1": 0.9464544138929089,
+        "macro_f1": 0.9446336984456816,
+        "auroc": 0.9874437611994173,
+        "average_precision": 0.9870476136456021,
+        "log_loss": 0.14597994275070017,
+        "brier": 0.042053153431348154
+      },
+      "recording": {
+        "n": 12711,
+        "positive_rate": 0.48147274014632996,
+        "confusion": {
+          "tn": 6213,
+          "fp": 378,
+          "fn": 325,
+          "tp": 5795
+        },
+        "accuracy": 0.9446935724962631,
+        "balanced_accuracy": 0.9447722458730117,
+        "sensitivity": 0.9468954248366013,
+        "specificity": 0.942649066909422,
+        "precision": 0.9387655920946055,
+        "npv": 0.9502906087488528,
+        "f1": 0.9428129829984543,
+        "negative_precision": 0.9502906087488528,
+        "negative_f1": 0.9464544138929089,
+        "macro_f1": 0.9446336984456816,
+        "auroc": 0.9874437611994173,
+        "average_precision": 0.9870476136456021,
+        "log_loss": 0.14597994275070017,
+        "brier": 0.042053153431348154
+      },
+      "subject": {
+        "n": 17,
+        "positive_rate": 0.47058823529411764,
+        "confusion": {
+          "tn": 9,
+          "fp": 0,
+          "fn": 0,
+          "tp": 8
+        },
+        "accuracy": 1.0,
+        "balanced_accuracy": 1.0,
+        "sensitivity": 1.0,
+        "specificity": 1.0,
+        "precision": 1.0,
+        "npv": 1.0,
+        "f1": 1.0,
+        "negative_precision": 1.0,
+        "negative_f1": 1.0,
+        "macro_f1": 1.0,
+        "auroc": 1.0,
+        "average_precision": 1.0,
+        "log_loss": 0.10125916468554512,
+        "brier": 0.011238625678107886
+      }
+    },
+    "val": {
+      "window": {
+        "n": 3825,
+        "positive_rate": 0.4,
+        "confusion": {
+          "tn": 2196,
+          "fp": 99,
+          "fn": 188,
+          "tp": 1342
+        },
+        "accuracy": 0.9249673202614379,
+        "balanced_accuracy": 0.9169934640522877,
+        "sensitivity": 0.8771241830065359,
+        "specificity": 0.9568627450980393,
+        "precision": 0.9312977099236641,
+        "npv": 0.9211409395973155,
+        "f1": 0.9033995287781891,
+        "negative_precision": 0.9211409395973155,
+        "negative_f1": 0.938662107287882,
+        "macro_f1": 0.9210308180330355,
+        "auroc": 0.9760166317797998,
+        "average_precision": 0.9707243160046048,
+        "log_loss": 0.19132501241941355,
+        "brier": 0.05627236159268668
+      },
+      "recording": {
+        "n": 3825,
+        "positive_rate": 0.4,
+        "confusion": {
+          "tn": 2196,
+          "fp": 99,
+          "fn": 188,
+          "tp": 1342
+        },
+        "accuracy": 0.9249673202614379,
+        "balanced_accuracy": 0.9169934640522877,
+        "sensitivity": 0.8771241830065359,
+        "specificity": 0.9568627450980393,
+        "precision": 0.9312977099236641,
+        "npv": 0.9211409395973155,
+        "f1": 0.9033995287781891,
+        "negative_precision": 0.9211409395973155,
+        "negative_f1": 0.938662107287882,
+        "macro_f1": 0.9210308180330355,
+        "auroc": 0.9760166317797998,
+        "average_precision": 0.9707243160046048,
+        "log_loss": 0.19132501241941355,
+        "brier": 0.05627236159268668
+      },
+      "subject": {
+        "n": 5,
+        "positive_rate": 0.4,
+        "confusion": {
+          "tn": 3,
+          "fp": 0,
+          "fn": 0,
+          "tp": 2
+        },
+        "accuracy": 1.0,
+        "balanced_accuracy": 1.0,
+        "sensitivity": 1.0,
+        "specificity": 1.0,
+        "precision": 1.0,
+        "npv": 1.0,
+        "f1": 1.0,
+        "negative_precision": 1.0,
+        "negative_f1": 1.0,
+        "macro_f1": 1.0,
+        "auroc": 1.0,
+        "average_precision": 1.0,
+        "log_loss": 0.12994377572803126,
+        "brier": 0.019671788389908428
+      }
+    },
+    "test": {
+      "window": {
+        "n": 4590,
+        "positive_rate": 0.5,
+        "confusion": {
+          "tn": 2001,
+          "fp": 294,
+          "fn": 507,
+          "tp": 1788
+        },
+        "accuracy": 0.8254901960784313,
+        "balanced_accuracy": 0.8254901960784313,
+        "sensitivity": 0.7790849673202614,
+        "specificity": 0.8718954248366013,
+        "precision": 0.8587896253602305,
+        "npv": 0.7978468899521531,
+        "f1": 0.8169979437971213,
+        "negative_precision": 0.7978468899521531,
+        "negative_f1": 0.8332292317301687,
+        "macro_f1": 0.8251135877636451,
+        "auroc": 0.9127611887165905,
+        "average_precision": 0.9129640620118066,
+        "log_loss": 0.4017728562799621,
+        "brier": 0.12404528347444357
+      },
+      "recording": {
+        "n": 4590,
+        "positive_rate": 0.5,
+        "confusion": {
+          "tn": 2001,
+          "fp": 294,
+          "fn": 507,
+          "tp": 1788
+        },
+        "accuracy": 0.8254901960784313,
+        "balanced_accuracy": 0.8254901960784313,
+        "sensitivity": 0.7790849673202614,
+        "specificity": 0.8718954248366013,
+        "precision": 0.8587896253602305,
+        "npv": 0.7978468899521531,
+        "f1": 0.8169979437971213,
+        "negative_precision": 0.7978468899521531,
+        "negative_f1": 0.8332292317301687,
+        "macro_f1": 0.8251135877636451,
+        "auroc": 0.9127611887165905,
+        "average_precision": 0.9129640620118066,
+        "log_loss": 0.4017728562799621,
+        "brier": 0.12404528347444357
+      },
+      "subject": {
+        "n": 6,
+        "positive_rate": 0.5,
+        "confusion": {
+          "tn": 3,
+          "fp": 0,
+          "fn": 0,
+          "tp": 3
+        },
+        "accuracy": 1.0,
+        "balanced_accuracy": 1.0,
+        "sensitivity": 1.0,
+        "specificity": 1.0,
+        "precision": 1.0,
+        "npv": 1.0,
+        "f1": 1.0,
+        "negative_precision": 1.0,
+        "negative_f1": 1.0,
+        "macro_f1": 1.0,
+        "auroc": 1.0,
+        "average_precision": 1.0,
+        "log_loss": 0.24720588414769695,
+        "brier": 0.05304490090015138
+      }
+    }
+  },
+  "coverage": {
+    "train": {
+      "n_expected": 12711,
+      "n_predicted": 12711
+    },
+    "val": {
+      "n_expected": 3825,
+      "n_predicted": 3825
+    },
+    "test": {
+      "n_expected": 4590,
+      "n_predicted": 4590
+    }
+  },
+  "warnings": [],
+  "config_hash": "e7bd8ab66906b223ec0f1bfb34ec8a2fa5871d49f1f703edb8cc287978d0b657",
+  "contract_version": "1.1"
+}

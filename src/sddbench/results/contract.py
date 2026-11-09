@@ -8,10 +8,11 @@ from __future__ import annotations
 
 import datetime as _dt
 
-CONTRACT_VERSION = "1.0"
+CONTRACT_VERSION = "1.1"
 
 SPLITS = ("train", "val", "test")
 LEVELS = ("window", "recording", "subject")
+UNITS = ("subject", "recording")
 
 REQUIRED_METRICS = (
     "n", "accuracy", "balanced_accuracy", "sensitivity", "specificity",
@@ -35,9 +36,17 @@ def validate_metrics(doc: dict) -> None:
     order = list(doc["class_order"])
     if len(order) != 2 or len(set(order)) != 2:
         raise ResultsContractError("class_order must contain exactly two distinct classes")
-    if doc["evaluation_unit"] != "subject":
+    unit = doc["evaluation_unit"]
+    if unit not in UNITS:
         raise ResultsContractError(
-            f"evaluation_unit must be 'subject', got {doc['evaluation_unit']!r}")
+            f"evaluation_unit must be one of {UNITS}, got {unit!r}")
+    primary_unit = doc.get("primary_unit") or unit
+    if primary_unit not in UNITS:
+        raise ResultsContractError(
+            f"primary_unit must be one of {UNITS}, got {primary_unit!r}")
+    if primary_unit != unit:
+        raise ResultsContractError(
+            f"primary_unit {primary_unit!r} must match evaluation_unit {unit!r}")
     for split in SPLITS:
         if split not in doc["metrics"]:
             raise ResultsContractError(f"metrics.json missing split {split!r}")
@@ -61,6 +70,7 @@ def validate_metrics(doc: dict) -> None:
 def attach_contract(doc: dict) -> dict:
     out = dict(doc)
     out["contract_version"] = CONTRACT_VERSION
+    out["primary_unit"] = out.get("primary_unit") or out.get("evaluation_unit")
     return out
 
 
@@ -88,8 +98,14 @@ def sanitize_run_meta(run: dict) -> dict:
         "model": run.get("model"),
         "training": _sanitize_training(run.get("training")),
         "best_epoch": run.get("best_epoch"),
+        "best_val_balanced_accuracy":
+            run.get("best_val_balanced_accuracy",
+                    run.get("best_val_subject_balanced_accuracy")),
         "best_val_subject_balanced_accuracy":
             run.get("best_val_subject_balanced_accuracy"),
+        "evaluation_unit": run.get("evaluation_unit"),
+        "primary_unit": run.get("primary_unit") or run.get("evaluation_unit"),
+        "grouping": run.get("grouping"),
         "started_at": run.get("started_at"),
         "finished_at": run.get("finished_at"),
         "elapsed_sec": run.get("elapsed_sec"),

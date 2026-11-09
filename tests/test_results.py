@@ -36,6 +36,70 @@ def _metrics(run_id: str = "run1", dataset: str = "demo") -> dict:
     }
 
 
+def test_contract_accepts_recording_unit_and_rejects_mismatch():
+    doc = _metrics()
+    doc["evaluation_unit"] = "recording"
+    doc["primary_unit"] = "recording"
+    validate_metrics(doc)
+
+    doc["primary_unit"] = "subject"
+    with pytest.raises(ResultsContractError):
+        validate_metrics(doc)
+
+    doc["evaluation_unit"] = "utterance"
+    doc["primary_unit"] = "utterance"
+    with pytest.raises(ResultsContractError):
+        validate_metrics(doc)
+
+
+def test_aggregate_computes_cross_seed_stats_and_is_deterministic(tmp_path):
+    from sddbench.results.aggregate import aggregate_runs
+
+    runs = tmp_path / "runs"
+    for i, value in enumerate((0.6, 0.8, 1.0)):
+        run_id = f"run{i}"
+        run_dir = _make_run_dir(runs, run_id)
+        doc = _metrics(run_id)
+        for split in ("train", "val", "test"):
+            for level in ("window", "recording", "subject"):
+                doc["metrics"][split][level]["balanced_accuracy"] = value
+                doc["metrics"][split][level]["auroc"] = value
+        (run_dir / "metrics.json").write_text(json.dumps(doc), encoding="utf-8")
+        run = _run(run_id)
+        run["seed"] = i
+        (run_dir / "run.json").write_text(json.dumps(run), encoding="utf-8")
+
+    out = tmp_path / "results"
+    frame = aggregate_runs(runs, out, bootstrap=200, seed=0)
+    assert len(frame) == 1
+    row = frame.iloc[0]
+    assert row["n_runs"] == 3
+    assert row["primary_unit"] == "subject"
+    assert row["balanced_accuracy_mean"] == pytest.approx(0.8)
+    assert row["balanced_accuracy_ci_low"] is not None
+
+    group_dir = next((out / "demo" / "aggregates").iterdir())
+    for name in ("aggregate.json", "aggregate.md",
+                 "figures/seed_boxplot.png", "figures/ci_compare.png"):
+        assert (group_dir / name).is_file()
+    assert (out / "aggregates.csv").is_file()
+
+    first = (group_dir / "aggregate.json").read_text(encoding="utf-8")
+    aggregate_runs(runs, out, bootstrap=200, seed=0)
+    assert (group_dir / "aggregate.json").read_text(encoding="utf-8") == first
+
+
+def test_aggregate_handles_single_run(tmp_path):
+    from sddbench.results.aggregate import aggregate_runs
+
+    _make_run_dir(tmp_path / "runs", "only")
+    frame = aggregate_runs(tmp_path / "runs", tmp_path / "out", bootstrap=50)
+    row = frame.iloc[0]
+    assert row["n_runs"] == 1
+    assert row["balanced_accuracy_ci_low"] == pytest.approx(0.8)
+    assert row["balanced_accuracy_ci_high"] == pytest.approx(0.8)
+
+
 def _run(run_id: str = "run1") -> dict:
     return {
         "run_id": run_id, "status": "completed", "experiment_id": "exp",

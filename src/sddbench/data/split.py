@@ -1,8 +1,9 @@
-"""D5: deterministic, label-stratified, person-disjoint splits.
+"""D5: deterministic, label-stratified, group-disjoint splits.
 
-The unit of assignment is `group_id` (a confirmed subject), never a file.
-Every recording of a subject lands in exactly one split, which prevents the
-same person (and therefore the same voice) from appearing in train and test.
+The unit of assignment is `group_id`. With the default `grouping: subject`
+that group is a confirmed subject, so every recording of a person lands in
+exactly one split. Datasets without speaker metadata use `grouping: file`,
+where each recording is its own group (leakage caveat documented in D10).
 """
 from __future__ import annotations
 
@@ -57,7 +58,9 @@ def assign_splits(manifest: list[dict], seed: int,
         group = str(row.get(COL_GROUP_ID) or "").strip()
         label = str(row.get(COL_LABEL) or "").strip()
         if not group or not label:
-            raise SplitError("manifest rows need group_id and label")
+            raise SplitError(
+                "manifest rows need group_id and label; datasets without speaker "
+                "metadata must be prepared with grouping: file")
         previous = subjects.get(group)
         if previous is not None and previous["label"] != label:
             raise SplitError(f"subject {group} appears with labels "
@@ -96,6 +99,7 @@ def assign_splits(manifest: list[dict], seed: int,
         "fractions": fractions,
         "n_samples": len(rows),
         "n_subjects": len(subjects),
+        "n_groups": len(subjects),
         "allocation_by_label": allocation,
         "by_split": {},
         "subjects_by_split": {},

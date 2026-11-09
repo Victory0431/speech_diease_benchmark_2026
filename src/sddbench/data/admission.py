@@ -96,14 +96,30 @@ def load_label_review(path: Path) -> dict[tuple[str, str], dict]:
     return table
 
 
-def review_inventory(rows: list[dict]) -> list[dict]:
-    """Speakers observed in eligible audio, with file/origin/mic coverage."""
+GROUPING_SUBJECT = "subject"
+GROUPING_FILE = "file"
+GROUPINGS = (GROUPING_SUBJECT, GROUPING_FILE)
+
+
+def _check_grouping(grouping: str) -> str:
+    if grouping not in GROUPINGS:
+        raise AdmissionError(f"grouping must be one of {GROUPINGS}, got {grouping!r}")
+    return grouping
+
+
+def review_inventory(rows: list[dict], grouping: str = GROUPING_SUBJECT) -> list[dict]:
+    """Groups observed in eligible audio, with file/origin/mic coverage.
+
+    With ``grouping="file"`` one recording is its own group, so datasets that
+    only ship label folders (no speaker metadata) can still be reviewed.
+    """
+    _check_grouping(grouping)
     buckets: dict[tuple[str, str], dict] = {}
     for row in eligible_rows(rows):
         if _s(row.get(COL_PARSE_STATUS)) != "ok":
             continue
         speaker = _s(row.get(COL_SPEAKER_TOKEN))
-        if not speaker:
+        if grouping == GROUPING_SUBJECT and not speaker:
             continue
         key = (speaker, _s(row.get(COL_DIRECTORY_GROUP)))
         item = buckets.setdefault(key, {
@@ -145,8 +161,10 @@ def review_status_rows(inventory: list[dict], review: dict) -> list[dict]:
     return out
 
 
-def validate_review(review: dict, inventory: list[dict]) -> dict:
+def validate_review(review: dict, inventory: list[dict],
+                    grouping: str = GROUPING_SUBJECT) -> dict:
     """Return coverage/conflict facts; `blocking` lists admission blockers."""
+    _check_grouping(grouping)
     blocking: list[dict] = []
     missing = [f"{i['speaker_token']}@{i['directory_group']}" for i in inventory
                if (i["speaker_token"], i["directory_group"]) not in review]
@@ -161,18 +179,24 @@ def validate_review(review: dict, inventory: list[dict]) -> dict:
         if entry.get("review_status", "").lower() != REVIEW_CONFIRMED:
             unconfirmed.append(f"{key[0]}@{key[1]}")
             continue
-        if not entry.get("confirmed_subject_id") or not entry.get("confirmed_label"):
+        if grouping == GROUPING_SUBJECT and not entry.get("confirmed_subject_id"):
+            incomplete.append(f"{key[0]}@{key[1]}")
+            continue
+        if not entry.get("confirmed_label"):
             incomplete.append(f"{key[0]}@{key[1]}")
             continue
         confirmed[key] = entry
 
-    subject_labels: dict[str, set[str]] = defaultdict(set)
-    subject_speakers: dict[str, set[str]] = defaultdict(set)
-    for (speaker, _group), entry in confirmed.items():
-        subject_labels[entry["confirmed_subject_id"]].add(entry["confirmed_label"])
-        subject_speakers[entry["confirmed_subject_id"]].add(speaker)
-    subject_conflicts = {s: sorted(v) for s, v in subject_labels.items() if len(v) > 1}
-    subject_aliases = {s: sorted(v) for s, v in subject_speakers.items() if len(v) > 1}
+    subject_conflicts: dict = {}
+    subject_aliases: dict = {}
+    if grouping == GROUPING_SUBJECT:
+        subject_labels: dict[str, set[str]] = defaultdict(set)
+        subject_speakers: dict[str, set[str]] = defaultdict(set)
+        for (speaker, _group), entry in confirmed.items():
+            subject_labels[entry["confirmed_subject_id"]].add(entry["confirmed_label"])
+            subject_speakers[entry["confirmed_subject_id"]].add(speaker)
+        subject_conflicts = {s: sorted(v) for s, v in subject_labels.items() if len(v) > 1}
+        subject_aliases = {s: sorted(v) for s, v in subject_speakers.items() if len(v) > 1}
 
     if missing:
         blocking.append(_issue(
@@ -277,8 +301,14 @@ def select_rows(rows: list[dict], selection: dict) -> tuple[list[dict], list[dic
 # ---------------------------------------------------------------- manifest
 
 def build_manifest(rows: list[dict], review: dict, dataset_id: str,
-                   review_path: Path, selection: dict) -> tuple[list[dict], list[dict]]:
-    """Attach confirmed labels and person-isolated group ids."""
+                   review_path: Path, selection: dict,
+                   grouping: str = GROUPING_SUBJECT) -> tuple[list[dict], list[dict]]:
+    """Attach confirmed labels and group ids.
+
+    ``grouping="subject"`` isolates people; ``grouping="file"`` treats each
+    recording as its own group (for datasets with no speaker metadata).
+    """
+    _check_grouping(grouping)
     issues: list[dict] = []
     variant = _s(selection.get("variant")) or "original"
     elicitation = _s(selection.get("elicitation")) or "unknown"
@@ -294,21 +324,23 @@ def build_manifest(rows: list[dict], review: dict, dataset_id: str,
                 _s(row.get(COL_RELATIVE_PATH)),
                 f"no confirmed review row for {key[0]}@{key[1]}"))
             continue
-        subject = entry["confirmed_subject_id"]
+        subject = entry["confirmed_subject_id"] if grouping == GROUPING_SUBJECT else ""
         label = entry["confirmed_label"]
         origin = _s(row.get(COL_ORIGIN_ID)) or _s(row.get(COL_RELATIVE_PATH))
+        group_key = f"{dataset_id}:{subject}" if grouping == GROUPING_SUBJECT \
+            else f"{dataset_id}:{origin}"
         previous = origin_owner.get(origin)
-        if previous is not None and previous != (subject, label):
+        if previous is not None and previous != (subject or group_key, label):
             issues.append(_issue(
                 "origin_subject_conflict", "error", _s(row.get(COL_RELATIVE_PATH)),
                 f"origin {origin!r} already owned by {previous}; refusing mixed ownership"))
             continue
-        origin_owner[origin] = (subject, label)
+        origin_owner[origin] = (subject or group_key, label)
         manifest.append({
             "sample_id": _s(row.get(COL_RELATIVE_PATH)),
             COL_RELATIVE_PATH: _s(row.get(COL_RELATIVE_PATH)),
             "subject_id": subject,
-            "group_id": f"{dataset_id}:{subject}",
+            "group_id": group_key,
             "origin_id": f"{dataset_id}:{origin}",
             "label_raw": _s(row.get(COL_LABEL_RAW)) or _s(row.get(COL_DIRECTORY_GROUP)),
             "label": label,
@@ -325,12 +357,12 @@ def build_manifest(rows: list[dict], review: dict, dataset_id: str,
     # Final isolation check across the built manifest.
     seen: dict[str, set[str]] = defaultdict(set)
     for item in manifest:
-        seen[item["subject_id"]].add(item["label"])
-    for subject, labels in seen.items():
+        seen[item["group_id"]].add(item["label"])
+    for group, labels in seen.items():
         if len(labels) > 1:
             issues.append(_issue(
                 "subject_label_conflict", "error", "",
-                f"subject {subject} appears with labels {sorted(labels)}"))
+                f"group {group} appears with labels {sorted(labels)}"))
     return manifest, issues
 
 

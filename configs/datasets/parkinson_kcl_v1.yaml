@@ -5,6 +5,7 @@ dataset_id: parkinson_kcl
 adapter: parkinson_kcl
 task_version: 1
 admission: pending_review          # label_review 确认后才能改为 approved
+grouping: subject                  # subject：按确认后的说话人隔离；file：每条录音自成一组（无说话人元数据时）
 
 naming:
   # ID<nn>[_](hc|pd)_<session tokens>[_<take>].wav

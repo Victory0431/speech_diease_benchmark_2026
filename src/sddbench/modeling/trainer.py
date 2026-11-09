@@ -60,14 +60,14 @@ def _git_commit(repo_root: Path) -> dict:
         return {"commit": None, "dirty": None}
 
 
-def _load_task_labels(repo_root: Path, dataset: str, task_id: str) -> dict:
+def _load_task_config(repo_root: Path, dataset: str, task_id: str) -> dict:
     path = repo_root / "configs" / "datasets" / f"{task_id}.yaml"
     if not path.is_file():
         path = repo_root / "configs" / "datasets" / f"{dataset}_v1.yaml"
     if not path.is_file():
         return {}
     with path.open("r", encoding="utf-8") as f:
-        return (yaml.safe_load(f) or {}).get("labels") or {}
+        return yaml.safe_load(f) or {}
 
 
 def load_run_data(cfg: dict, workspace: Path, repo_root: Path) -> dict:
@@ -111,7 +111,11 @@ def load_run_data(cfg: dict, workspace: Path, repo_root: Path) -> dict:
         raise RunError(f"MLP baseline needs one actual sample rate, found {rates}")
     sample_rate = int(rates[0])
 
-    labels_cfg = _load_task_labels(repo_root, cfg["dataset"], task_id)
+    task_cfg = _load_task_config(repo_root, cfg["dataset"], task_id)
+    labels_cfg = task_cfg.get("labels") or {}
+    grouping = str(task_cfg.get("grouping") or "subject")
+    if grouping not in ("subject", "file"):
+        raise RunError(f"task {task_id} grouping must be subject|file, got {grouping!r}")
     class_order = list((cfg.get("labels") or {}).get("class_order")
                        or labels_cfg.get("class_order")
                        or ["control", "disorder"])
@@ -142,6 +146,7 @@ def load_run_data(cfg: dict, workspace: Path, repo_root: Path) -> dict:
         "class_order": class_order, "positive_class": positive,
         "positive_index": class_order.index(positive),
         "sample_rate": sample_rate, "feature_cfg": feature_cfg,
+        "grouping": grouping,
         "manifest_file": manifest_file, "split_file": split_file,
         "split_dir": split_dir,
     }
@@ -183,6 +188,14 @@ def _subject_metric(frame: pd.DataFrame, probs: np.ndarray,
     return binary_metrics(y, p, positive_index)
 
 
+def _level_metric(frame: pd.DataFrame, probs: np.ndarray, class_order: list[str],
+                  positive_index: int, unit: str) -> dict:
+    if unit == "recording":
+        y = (frame["label"].to_numpy() == class_order[positive_index]).astype(int)
+        return binary_metrics(y, probs, positive_index)
+    return _subject_metric(frame, probs, class_order, positive_index)
+
+
 def _evaluate(frame: pd.DataFrame, probs: np.ndarray, class_order: list[str],
               positive_index: int) -> dict:
     y = (frame["label"].to_numpy() == class_order[positive_index]).astype(int)
@@ -203,14 +216,18 @@ def run_experiment(cfg: dict, workspace: Path, repo_root: Path,
     if device.startswith("cuda") and not torch.cuda.is_available():
         raise RunError("device=cuda requested but CUDA is not available")
 
-    selection_metric = str(cfg["training"].get("selection_metric",
-                                               "subject_balanced_accuracy"))
-    if selection_metric != "subject_balanced_accuracy":
-        raise RunError(f"only selection_metric=subject_balanced_accuracy is implemented, "
-                       f"got {selection_metric!r}")
     unit = str((cfg.get("evaluation") or {}).get("unit", "subject"))
-    if unit != "subject":
-        raise RunError(f"only evaluation.unit=subject is implemented, got {unit!r}")
+    if unit not in ("subject", "recording"):
+        raise RunError(f"evaluation.unit must be subject|recording, got {unit!r}")
+    grouping = data["grouping"]
+    if grouping == "file" and unit != "recording":
+        raise RunError("grouping=file means one recording per group; "
+                       "set evaluation.unit=recording")
+    default_selection = f"{unit}_balanced_accuracy"
+    selection_metric = str(cfg["training"].get("selection_metric", default_selection))
+    if selection_metric != default_selection:
+        raise RunError(f"selection_metric must be {default_selection!r} for "
+                       f"evaluation.unit={unit!r}, got {selection_metric!r}")
 
     merged = data["merged"]
     X = data["X"]
@@ -226,7 +243,7 @@ def run_experiment(cfg: dict, workspace: Path, repo_root: Path,
     if len(set(groups[train_mask]) & set(groups[val_mask])) or \
             len(set(groups[train_mask]) & set(groups[test_mask])) or \
             len(set(groups[val_mask]) & set(groups[test_mask])):
-        raise RunError("person leakage detected between splits")
+        raise RunError("group leakage detected between splits")
 
     scaler_mean = X[train_mask].mean(axis=0)
     scaler_std = X[train_mask].std(axis=0)
@@ -285,14 +302,14 @@ def run_experiment(cfg: dict, workspace: Path, repo_root: Path,
             seen += len(batch)
         val_probs = _predict(model, Z[val_mask], device, batch_size)
         val_frame = merged.loc[val_mask, ["group_id", "label", "split"]]
-        val_m = _subject_metric(val_frame, val_probs, class_order, positive_index)
+        val_m = _level_metric(val_frame, val_probs, class_order, positive_index, unit)
         val_loss = float(-np.mean(np.log(np.clip(
             val_probs[np.arange(val_probs.shape[0]), y[val_mask]], 1e-12, 1.0))))
         score = val_m["balanced_accuracy"] if val_m["balanced_accuracy"] is not None else -1.0
         history.append({
             "epoch": epoch, "train_loss": total_loss / max(seen, 1),
             "train_accuracy": correct / max(seen, 1), "val_loss": val_loss,
-            "val_subject_balanced_accuracy": score})
+            f"val_{unit}_balanced_accuracy": score})
         improved = score > best_score + 1e-9 or (
             abs(score - best_score) <= 1e-9 and val_loss < best_loss - 1e-9)
         if improved:
@@ -388,7 +405,10 @@ def run_experiment(cfg: dict, workspace: Path, repo_root: Path,
         },
         "class_order": class_order, "positive_class": data["positive_class"],
         "model": cfg["model"], "training": cfg["training"],
+        "evaluation_unit": unit, "primary_unit": unit, "grouping": grouping,
+        "selection_metric": selection_metric,
         "best_epoch": best_epoch,
+        "best_val_balanced_accuracy": best_score,
         "best_val_subject_balanced_accuracy": best_score,
         "metrics": metrics,
         "scaler": {"mean": scaler_mean.tolist(), "std": scaler_std.tolist()},
@@ -415,7 +435,7 @@ def run_experiment(cfg: dict, workspace: Path, repo_root: Path,
         for split in ("train", "val", "test")}
     warnings = []
     for split in ("train", "val", "test"):
-        for level in ("window", "subject"):
+        for level in ("window", "recording", "subject"):
             if job["metrics"][split][level]["auroc"] is None:
                 warnings.append(f"{split}/{level}: AUROC undefined (single class)")
     metrics_doc = {
@@ -423,7 +443,9 @@ def run_experiment(cfg: dict, workspace: Path, repo_root: Path,
         "task_id": data["task_id"],
         "dataset": cfg["dataset"],
         "class_order": class_order,
-        "evaluation_unit": "subject",
+        "evaluation_unit": unit,
+        "primary_unit": unit,
+        "grouping": grouping,
         "positive_class": data["positive_class"],
         "primary_metric": "balanced_accuracy",
         "primary_split": "test",

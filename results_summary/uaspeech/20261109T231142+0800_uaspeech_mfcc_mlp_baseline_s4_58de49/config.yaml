@@ -1,0 +1,40 @@
+experiment_id: uaspeech_mfcc_mlp_baseline
+task_id: uaspeech_v1
+dataset: uaspeech
+prepared_id: 20261109T193404+0800_uaspeech_prepare
+split_id: 20261109T193524+0800_seed0_f7eb7f76
+features:
+  config: configs/features/mfcc20_stats.yaml
+  preprocess: configs/preprocessing/uaspeech_native_4s_head.yaml
+model:
+  name: mlp
+  hidden_dims:
+  - 128
+  dropout: 0.2
+  activation: relu
+training:
+  seed: 4
+  epochs: 80
+  batch_size: 64
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  optimizer: adamw
+  early_stopping_patience: 10
+  class_weighting: subject_balanced
+  device: cpu
+  selection_metric: subject_balanced_accuracy
+  selection_direction: max
+evaluation:
+  positive_class: disorder
+  unit: subject
+  primary_metric: balanced_accuracy
+  binary_threshold: 0.5
+labels:
+  class_order:
+  - control
+  - disorder
+  positive_class: disorder
+experiment_name: UAspeech MFCC20+stats -> MLP baseline
+experiment_group: baseline_v1
+purpose: 验证数据层到模型层的完整闭环，并给出第一条可追溯基线
+stage: baseline

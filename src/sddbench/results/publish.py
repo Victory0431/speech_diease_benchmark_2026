@@ -90,7 +90,10 @@ def build_leaderboard(results_root: str | Path) -> pd.DataFrame:
         metrics = json.loads(metrics_file.read_text(encoding="utf-8"))
         data = meta.get("data") or {}
         counts = data.get("subject_counts") or {}
+        unit = metrics.get("primary_unit") or metrics.get("evaluation_unit") or "subject"
         subject = metrics["metrics"]["test"]["subject"]
+        recording = metrics["metrics"]["test"]["recording"]
+        primary = metrics["metrics"]["test"][unit]
         window = metrics["metrics"]["test"]["window"]
         model = meta.get("model") or {}
         training = meta.get("training") or {}
@@ -114,28 +117,39 @@ def build_leaderboard(results_root: str | Path) -> pd.DataFrame:
             "test_subjects": counts.get("test"),
             "n_samples": data.get("n_samples"),
             "best_epoch": meta.get("best_epoch"),
+            "best_val_balanced_accuracy":
+                meta.get("best_val_balanced_accuracy",
+                         meta.get("best_val_subject_balanced_accuracy")),
             "best_val_subject_balanced_accuracy":
                 meta.get("best_val_subject_balanced_accuracy"),
+            "primary_unit": unit,
             "git_commit": (meta.get("git") or {}).get("commit"),
             "git_dirty": (meta.get("git") or {}).get("dirty"),
             "published_at": meta.get("published_at"),
             "contract_version": meta.get("contract_version"),
         }
-        for prefix, block in (("subject", subject), ("window", window)):
+        for prefix, block in (("subject", subject), ("recording", recording),
+                              ("window", window)):
             for metric in ("accuracy", "balanced_accuracy", "sensitivity",
                            "specificity", "precision", "f1", "auroc",
                            "average_precision", "log_loss", "brier", "n"):
                 row[f"{prefix}_{metric}"] = block.get(metric)
             for key in ("tn", "fp", "fn", "tp"):
                 row[f"{prefix}_{key}"] = (block.get("confusion") or {}).get(key)
+        for metric in ("accuracy", "balanced_accuracy", "sensitivity",
+                       "specificity", "precision", "f1", "auroc",
+                       "average_precision", "log_loss", "brier", "n"):
+            row[f"primary_{metric}"] = primary.get(metric)
+        for key in ("tn", "fp", "fn", "tp"):
+            row[f"primary_{key}"] = (primary.get("confusion") or {}).get(key)
         rows.append(row)
 
     frame = pd.DataFrame(rows)
     if frame.empty:
-        frame = pd.DataFrame(columns=["dataset", "run_id", "subject_balanced_accuracy"])
+        frame = pd.DataFrame(columns=["dataset", "run_id", "primary_balanced_accuracy"])
     else:
         frame = frame.sort_values(
-            ["subject_balanced_accuracy", "subject_auroc"],
+            ["primary_balanced_accuracy", "primary_auroc"],
             ascending=False, na_position="last").reset_index(drop=True)
     frame.to_csv(results_root / "leaderboard.csv", index=False)
     (results_root / "leaderboard.md").write_text(_render(frame), encoding="utf-8")
@@ -152,30 +166,34 @@ def _fmt(value, nd: int = 3) -> str:
 
 def _render(frame: pd.DataFrame) -> str:
     lines = [
-        "# 跨数据集基准榜（test / subject 为主指标）",
+        "# 跨数据集基准榜（test / 主评价单位）",
         "",
         f"- 结果契约版本：`{CONTRACT_VERSION}`",
         f"- 运行数：`{len(frame)}`",
-        "- 排序：`subject_balanced_accuracy` 降序；同分看 `subject_auroc`。",
+        "- 排序：`primary_balanced_accuracy` 降序；同分看 `primary_auroc`。",
+        "- `primary_unit` 标出主评价单位：有说话人时为 subject，没有说话人时为 recording；",
+        "  不同单位之间不直接比较，只并列展示。",
         "- 这里只含聚合指标与小体积图；权重、逐录音预测、患者级清单不在仓库。",
         "",
-        "| # | dataset | run_id | test subjects | seed | dropout | bAcc | sens | spec | precision | F1 | AUROC | AP | log loss | Brier | window bAcc |",
-        "| ---: | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| # | dataset | run_id | primary unit | test groups | seed | dropout | bAcc | sens | spec | precision | F1 | AUROC | AP | log loss | Brier | window bAcc |",
+        "| ---: | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for i, row in frame.iterrows():
         lines.append(
             f"| {i + 1} | {row['dataset']} | {row['run_id']} | "
+            f"{row.get('primary_unit', 'subject')} | "
             f"{_fmt(row['test_subjects'])} | {_fmt(row['seed'])} | "
-            f"{_fmt(row['dropout'])} | {_fmt(row['subject_balanced_accuracy'])} | "
-            f"{_fmt(row['subject_sensitivity'])} | {_fmt(row['subject_specificity'])} | "
-            f"{_fmt(row['subject_precision'])} | {_fmt(row['subject_f1'])} | "
-            f"{_fmt(row['subject_auroc'])} | {_fmt(row['subject_average_precision'])} | "
-            f"{_fmt(row['subject_log_loss'])} | {_fmt(row['subject_brier'])} | "
+            f"{_fmt(row['dropout'])} | {_fmt(row['primary_balanced_accuracy'])} | "
+            f"{_fmt(row['primary_sensitivity'])} | {_fmt(row['primary_specificity'])} | "
+            f"{_fmt(row['primary_precision'])} | {_fmt(row['primary_f1'])} | "
+            f"{_fmt(row['primary_auroc'])} | {_fmt(row['primary_average_precision'])} | "
+            f"{_fmt(row['primary_log_loss'])} | {_fmt(row['primary_brier'])} | "
             f"{_fmt(row['window_balanced_accuracy'])} |")
     lines += [
         "",
-        "> 主指标是 test 说话人级 balanced accuracy：同一人的录音先平均，再按人计算。",
-        "> 只有个位数测试说话人时，一两人的差异就可能改变排序；跨数据集比较还需要",
+        "> 主指标是 test 主评价单位 balanced accuracy：subject 单位先把同一人的录音平均；",
+        "> recording 单位表示该库没有说话人信息，指标无法排除同一人跨划分的泄漏。",
+        "> 只有个位数测试单元时，一两人的差异就可能改变排序；跨数据集比较还需要",
         "> 多 seed、置信区间与同一套数据端参数，不能只看单行数字。",
         "",
     ]
