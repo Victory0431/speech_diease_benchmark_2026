@@ -1,0 +1,34 @@
+# MFCC 统计量配方（D3）：20 维 MFCC，按帧求均值+标准差 -> 40 维/窗口
+# 关键决策（见 docs/data_layer_plan.md §9）：
+#   - 使用 torchaudio MFCC，log_mels=true：矩阵为 log(mel_power + 1e-6)，
+#     避开默认 amplitude_to_DB 的 top_db 相对最大值缩放（数据集相关）。
+#   - center=false：只用有效声音，不反射补边；补零段不进入任何帧。
+#   - 帧长/步长按毫秒在实际采样率上取整，n_fft=next_power_of_two(win_length)。
+#   - 统计量 mean/std(ddof=0)，并非"每帧归一化后拼接"。
+# 修改以上任何一项都会改变 feature_hash 与缓存目录。
+schema_version: "1.0"
+name: mfcc_stats
+description: "20 MFCC + mean/std statistics on valid audio only (40 dims)"
+implementation: torchaudio
+n_mfcc: 20
+n_mels: 64
+frame_ms: 25.0
+hop_ms: 10.0
+n_fft_policy: next_power_of_two_window
+window: hann_periodic
+center: false
+power: 2.0
+f_min_hz: 0.0
+f_max_policy: nyquist
+f_max_hz: null
+mel_scale: htk
+mel_norm: null
+log_mels: true
+log_implementation: torchaudio_native_mels
+log_epsilon: 1.0e-06
+dct_type: 2
+dct_norm: ortho
+include_c0: true
+stats: [mean, std]
+std_ddof: 0
+save_frames: false

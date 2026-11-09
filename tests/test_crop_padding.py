@@ -206,7 +206,7 @@ def test_extract_features_end_to_end_keeps_originals(tmp_path, synth_root, monke
         assert hashlib.sha256(p.read_bytes()).hexdigest() == digest
 
 
-def test_extract_features_refuses_missing_features_stage(tmp_path, synth_root, monkeypatch):
+def test_extract_features_rejects_missing_feature_config(tmp_path, synth_root, monkeypatch):
     _, paths_file = _make_scan(tmp_path, synth_root)
     monkeypatch.chdir(tmp_path)
     code = main([
@@ -214,7 +214,7 @@ def test_extract_features_refuses_missing_features_stage(tmp_path, synth_root, m
         "--preprocess", "configs/preprocessing/uaspeech_native_smoke.yaml",
         "--features", "configs/features/mfcc20_stats.yaml", "--paths", str(paths_file),
     ])
-    assert code == 2
+    assert code == 2  # config does not exist here -> explicit error, not silent success
 
 
 def test_stratified_sample_is_deterministic_and_cross_speaker():

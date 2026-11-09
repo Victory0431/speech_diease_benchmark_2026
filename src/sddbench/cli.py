@@ -57,6 +57,14 @@ from .data.windows import (
 )
 from .reporting.dataset_report import build_report
 from .reporting.job_report import write_inspection
+from .features.cache import FeatureCacheManager
+from .features.mfcc import (
+    FeatureConfigError,
+    FeatureError,
+    extract_mfcc,
+    implementation_info,
+    normalize_feature_config,
+)
 
 NOT_IMPLEMENTED = ("prepare", "split", "run", "sweep", "cache", "train", "summarize", "dashboard")
 
@@ -279,18 +287,11 @@ def cmd_dataset_report(args) -> int:
 
 
 def cmd_extract_features(args) -> int:
-    """Build a deterministic view/window index from a saved D1 scan.
+    """Build a deterministic view/window index and (optionally) MFCC statistics.
 
     D2 scope: channel selection, crop, optional resample, padding and
-    inspection previews. No MFCC yet -- asking for `--features` refuses instead
-    of pretending features were computed.
+    inspection previews. D3 adds the fixed MFCC recipe + sharded cache.
     """
-    if args.features:
-        print("CONFIG ERROR: --features (MFCC) is not implemented in this stage "
-              "(D2 builds the view/window index only). Refusing to fake feature output.",
-              file=sys.stderr)
-        return 2
-
     t0 = time.time()
     paths = load_paths(args.paths)
     root = dataset_root(paths, args.dataset)
@@ -302,6 +303,21 @@ def cmd_extract_features(args) -> int:
         raise ConfigError(f"invalid preprocessing config {args.preprocess}: {e}") from e
     cfg["name"] = str(pre_raw.get("name") or Path(args.preprocess).stem)
     cfg["description"] = str(pre_raw.get("description") or "")
+
+    feat_cfg = None
+    feat_impl = None
+    if args.features:
+        fraw = _load_yaml(args.features)
+        try:
+            feat_cfg = normalize_feature_config(fraw)
+        except FeatureConfigError as e:
+            raise ConfigError(f"invalid feature config {args.features}: {e}") from e
+        feat_cfg["name"] = str(fraw.get("name") or Path(args.features).stem)
+        feat_cfg["description"] = str(fraw.get("description") or "")
+        try:
+            feat_impl = implementation_info()
+        except FeatureConfigError as e:
+            raise ConfigError(str(e)) from e
 
     scan_dir = workspace_dir(paths, "inventory", args.dataset, args.source, create=False)
     meta_file = scan_dir / "meta.json"
@@ -341,8 +357,13 @@ def cmd_extract_features(args) -> int:
                and not cfg["allow_mixed_native"] and mixed)
 
     cfg_fp = preprocess_fingerprint(cfg)
-    job_id = (f"{_stamp()}_{args.dataset}_views_{cfg['position']}_"
-              f"{float(cfg['observe_seconds']):g}s_{cfg_fp[:8]}")
+    base_job_id = (f"{_stamp()}_{args.dataset}_views_{cfg['position']}_"
+                   f"{float(cfg['observe_seconds']):g}s_{cfg_fp[:8]}")
+    job_id = base_job_id
+    suffix = 0
+    while workspace_dir(paths, "feature_jobs", job_id, create=False).exists():
+        suffix += 1
+        job_id = f"{base_job_id}_{suffix:02d}"
     job_dir = workspace_dir(paths, "feature_jobs", job_id)
     print(f"[extract-features] job_id={job_id}")
     print(f"[extract-features] output dir: {job_dir}")
@@ -350,17 +371,56 @@ def cmd_extract_features(args) -> int:
     preview_limit = max(0, int(args.previews or 0))
     preview_dir = (job_dir / "previews") if preview_limit and not blocked else None
 
+    compute_features = bool(feat_cfg) and not args.dry_run and not blocked
+    manager = None
+    if compute_features:
+        if args.cache_mode == "run":
+            cache_root = job_dir / "cache" / "features" / "mfcc_stats"
+        else:
+            cache_root = Path(paths["workspace_root"]) / "cache" / "features" / "mfcc_stats"
+        manager = FeatureCacheManager(cache_root, feat_cfg, cache_mode=args.cache_mode)
+        print(f"[extract-features] feature cache ({args.cache_mode}): {cache_root}")
+
+    feature_counts = Counter({"n_cached": 0, "n_new": 0, "n_failed": 0})
+    feature_failures: list[dict] = []
+
+    def _on_view(row, valid, processed_sr):
+        cache = manager.cache_for(processed_sr)
+        existing = cache.existing(row["window_id"])
+        if existing is not None:
+            if existing.get("view_hash") != row["view_hash"]:
+                feature_counts["n_failed"] += 1
+                feature_failures.append({
+                    "issue_type": "feature_cache_collision", "severity": "error",
+                    "relative_path": row["relative_path"],
+                    "detail": f"window_id {row['window_id']} has a different view_hash"})
+                return
+            feature_counts["n_cached"] += 1
+            return
+        try:
+            result = extract_mfcc(valid, processed_sr, feat_cfg, feat_impl)
+            cache.add(row["window_id"], row["sample_id"], result.vector,
+                      result.n_frames, row["view_hash"])
+            feature_counts["n_new"] += 1
+        except (FeatureError, FeatureConfigError) as e:
+            feature_counts["n_failed"] += 1
+            feature_failures.append({
+                "issue_type": "feature_failed", "severity": "error",
+                "relative_path": row["relative_path"], "detail": str(e)[:500]})
+
     table = None
     if blocked:
         print(f"[extract-features] BLOCKED: sample_rate_policy=native with mixed selected Hz "
               f"{dict(sr_selected)} and allow_mixed_native=false. "
               f"Choose resample(target_sample_rate=...) or enable mixed-native explicitly.")
-        view_rows, issues, counts = [], [{
+        view_rows = []
+        issues = [{
             "issue_type": "blocked_mixed_native_sample_rate", "severity": "error",
             "relative_path": "",
             "detail": f"selected sample rates {dict(sr_selected)}; policy=native, "
                       f"allow_mixed_native=false",
-        }], {"requested": len(chosen), "built": 0, "blocked": True}
+        }]
+        counts = {"requested": len(chosen), "built": 0, "blocked": True}
         frontend = {}
     else:
         table = build_view_index(
@@ -369,14 +429,53 @@ def cmd_extract_features(args) -> int:
             preview_dir=preview_dir,
             preview_limit=preview_limit,
             verify_source_hash=not args.no_verify_source_hash,
+            on_view=_on_view if manager is not None else None,
         )
-        view_rows, issues, counts = table.rows, table.issues, table.counts
+        view_rows = table.rows
+        issues = table.issues + feature_failures
+        counts = table.counts
         frontend = table.frontend_by_sample_rate
         print(f"[extract-features] windows built={counts['built']}/{counts['requested']} "
               f"({time.time() - t0:.1f}s)")
+        if manager is not None:
+            print(f"[extract-features] features: new={feature_counts['n_new']} "
+                  f"cached={feature_counts['n_cached']} failed={feature_counts['n_failed']}")
 
-    status = ("blocked_mixed_sample_rate" if blocked
-              else ("planned" if counts.get("built") else "failed_no_windows"))
+    feature_summary = None
+    if feat_cfg:
+        dim = 2 * int(feat_cfg["n_mfcc"])
+        if manager is not None:
+            finalized = manager.finalize()
+            feature_summary = {
+                "config": feat_cfg,
+                "dim": dim,
+                "cache_mode": args.cache_mode,
+                "n_new": feature_counts["n_new"],
+                "n_from_cache": feature_counts["n_cached"],
+                "n_failed": feature_counts["n_failed"],
+                "n_items": finalized["n_items"],
+                "caches": finalized["caches"],
+                "feature_hashes": {str(c["sample_rate"]): c["feature_hash"]
+                                   for c in finalized["caches"]},
+            }
+        else:
+            feature_summary = {
+                "config": feat_cfg, "dim": dim, "cache_mode": args.cache_mode,
+                "n_new": 0, "n_from_cache": 0, "n_failed": 0, "n_items": 0,
+                "caches": [], "planned": True,
+                "note": "dry-run/blocked: features were not computed",
+            }
+
+    if blocked:
+        status = "blocked_mixed_sample_rate"
+    elif not counts.get("built"):
+        status = "failed_no_windows"
+    elif args.dry_run or feat_cfg is None:
+        status = "planned"
+    elif feature_counts["n_failed"]:
+        status = "completed_with_feature_errors"
+    else:
+        status = "completed"
 
     job = {
         "job_id": job_id,
@@ -390,7 +489,8 @@ def cmd_extract_features(args) -> int:
         "admission": (scan_meta.get("task_config") or {}).get("admission", "pending_review"),
         "preprocess": cfg,
         "preprocess_fingerprint": cfg_fp,
-        "feature": None,
+        "features_requested": bool(feat_cfg),
+        "feature": feature_summary,
         "cache_mode": args.cache_mode,
         "selection": selection,
         "sample_rate_inventory": {str(k): v for k, v in sorted(sr_inventory.items())},
@@ -406,6 +506,9 @@ def cmd_extract_features(args) -> int:
             "inspection_md": str(job_dir / "inspection.md"),
             "config_yaml": str(job_dir / "config.yaml"),
             "previews_dir": str(preview_dir) if preview_dir else None,
+            "cache_root": (str(manager.base_root) if manager is not None else None),
+            "cache_dirs": ([c["cache_dir"] for c in (feature_summary or {}).get("caches", [])]
+                           if feature_summary else []),
         },
         "tools": tool_versions(),
         "code_version": __version__,
@@ -420,6 +523,9 @@ def cmd_extract_features(args) -> int:
     import yaml
     (job_dir / "config.yaml").write_text(
         yaml.safe_dump(cfg, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    if feat_cfg:
+        (job_dir / "feature_config.yaml").write_text(
+            yaml.safe_dump(feat_cfg, allow_unicode=True, sort_keys=False), encoding="utf-8")
     pd.DataFrame(view_rows, columns=WINDOW_COLUMNS).to_csv(
         job_dir / "windows.csv", index=False)
     pd.DataFrame(issues, columns=ISSUE_COLUMNS).to_csv(job_dir / "issues.csv", index=False)
@@ -438,8 +544,13 @@ def cmd_extract_features(args) -> int:
     if not counts.get("built"):
         print("[extract-features] no windows built; inspect issues.csv before retrying.")
         return 1
-    print(f"[extract-features] next: review inspection.md and previews, then "
-          f"compute MFCC for these views (D3).")
+    if feature_summary and feature_summary.get("n_failed"):
+        print(f"[extract-features] {feature_summary['n_failed']} feature failures; "
+              f"see issues.csv and the cache index.")
+        return 4
+    if manager is None:
+        print("[extract-features] next: review inspection.md and previews, then pass "
+              "--features configs/features/mfcc20_stats.yaml to compute MFCC (D3).")
     return 0
 
 

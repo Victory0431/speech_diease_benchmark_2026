@@ -46,3 +46,42 @@ def synth_root(tmp_path):
     # unparsable stem
     _write_wav(d2 / "weirdname.wav", 0.5)
     return root
+
+
+@pytest.fixture
+def scan_workspace(tmp_path, synth_root):
+    """A completed full-mode scan of `synth_root` under a throwaway workspace.
+
+    Returns (workspace_root, paths_file, scan_dir).
+    """
+    import json
+
+    import pandas as pd
+    import yaml
+
+    from sddbench.data.adapters.registry import get_adapter
+    from sddbench.data.audit import audit_config_defaults, run_audit
+    from sddbench.data.scan import scan_files
+    from sddbench.data.schema import COL_RELATIVE_PATH, FILES_COLUMNS
+
+    workspace = tmp_path / "ws"
+    scan_dir = workspace / "inventory" / "uaspeech" / "scan1"
+    scan_dir.mkdir(parents=True)
+    rows, _ = scan_files(synth_root)
+    adapter = get_adapter("uaspeech")
+    collected = adapter.collect(synth_root, {}, rows)
+    merged = [dict(r, **collected.enrichment.get(r[COL_RELATIVE_PATH], {})) for r in rows]
+    enriched, completed = run_audit(synth_root, merged, "full", scan_dir, workers=2,
+                                    quality_cfg=audit_config_defaults())
+    assert completed
+    pd.DataFrame(enriched, columns=FILES_COLUMNS).to_csv(scan_dir / "files.csv", index=False)
+    (scan_dir / "meta.json").write_text(json.dumps({
+        "scan_id": "scan1", "mode": "full", "status": "completed",
+        "task_config": {"admission": "pending_review"},
+    }), encoding="utf-8")
+    paths_file = workspace / "paths.local.yaml"
+    paths_file.write_text(yaml.safe_dump({
+        "workspace_root": str(workspace),
+        "dataset_roots": {"uaspeech": str(synth_root)},
+    }, allow_unicode=True), encoding="utf-8")
+    return workspace, paths_file, scan_dir

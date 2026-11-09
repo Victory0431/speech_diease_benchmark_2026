@@ -269,12 +269,17 @@ def build_view_index(root: Path, records: list[dict], cfg: dict, *,
                      source_scan_id: str,
                      preview_dir: Path | None = None,
                      preview_limit: int = 0,
-                     verify_source_hash: bool = True) -> ViewTable:
+                     verify_source_hash: bool = True,
+                     on_view=None) -> ViewTable:
     """Decode each selected record once and build one window row per sample.
 
     Only successfully decoded audio candidates produce windows. Files whose
     content hash differs from the D1 scan are refused (not silently reused),
     which couples every view to the statistics it was derived from.
+
+    `on_view(row, valid_waveform, processed_sample_rate)` runs synchronously for
+    each built window (used by MFCC extraction) so full runs never keep all
+    waveforms in memory and never decode twice.
     """
     table = ViewTable()
     counts = Counter({
@@ -416,7 +421,8 @@ def build_view_index(root: Path, records: list[dict], cfg: dict, *,
 
         row = {
             "sample_id": sample_id,
-            "window_id": f"{sample_id}|w0",
+            # include scan + view so a different crop can never hit a stale cache row
+            "window_id": f"{source_scan_id}|{sample_id}|w0|{view_hash[:12]}",
             "relative_path": rel,
             "source_scan_id": source_scan_id,
             "directory_group": _s(rec.get(COL_DIRECTORY_GROUP)),
@@ -459,6 +465,8 @@ def build_view_index(root: Path, records: list[dict], cfg: dict, *,
         }
         table.rows.append({c: row.get(c) for c in WINDOW_COLUMNS})
         counts["built"] += 1
+        if on_view is not None:
+            on_view(row, valid, target_sr)
 
     table.counts = dict(counts)
     table.sample_rate_inventory = {str(k): v for k, v in sorted(sr_inventory.items(),

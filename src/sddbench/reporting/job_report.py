@@ -112,20 +112,39 @@ def render_inspection(job: dict) -> str:
                          f"{i['detail']}")
 
     previews = [r["preview_path"] for r in rows if r.get("preview_path")]
+    fs = job.get("feature")
+    section = 6
+    if fs:
+        lines += ["", f"## {section}. MFCC 特征（仅有效声音帧）", ""]
+        fcfg = fs.get("config") or {}
+        lines += [
+            f"- 配方：`{fcfg.get('name', 'mfcc_stats')}`｜n_mfcc={fcfg.get('n_mfcc')}"
+            f"｜n_mels={fcfg.get('n_mels')}｜stats=mean+std(ddof={fcfg.get('std_ddof')})"
+            f"｜log_mels=true(eps={fcfg.get('log_epsilon')})",
+            f"- 输出维度：{fs.get('dim')}｜cache_mode：`{fs.get('cache_mode')}`"
+            f"｜新增 {fs.get('n_new')} 条｜命中缓存 {fs.get('n_from_cache')} 条"
+            f"｜失败 {fs.get('n_failed')} 条",
+        ]
+        for c in fs.get("caches", []):
+            lines.append(f"- 缓存：`{c['cache_dir']}`｜{c['sample_rate']} Hz｜dim={c['dim']}"
+                         f"｜{c['n_items']} 条 / {c['n_shards']} 个分片"
+                         f"｜feature_hash=`{c['feature_hash'][:16]}…`")
+        lines.append("- 补零段不进入 MFCC 统计；`n_frames` 仅按有效声音推导。")
+        section += 1
     lines += [
         "",
-        "## 6. 可审听派生片段",
+        f"## {section}. 可审听派生片段",
         "",
         ("共 " + str(len(previews)) + f" 个，位于 `{job['outputs'].get('previews_dir', '')}`：\n"
          + "\n".join(f"- `{p}`" for p in previews))
         if previews else "_未导出派生音频（dry-run 预览数量为 0）。_",
         "",
-        "## 7. 边界与下一步",
+        f"## {section + 1}. 边界与下一步",
         "",
         "- 补零只改变张量容纳长度；有效样本数 `valid_num_samples` 与补零数分开记录。",
         "- `too_short_for_frontend` 的样本被排除并记录，未私改帧长。",
         "- 标签全部为 `pending`（目录名不是确认标签）；进入正式训练前必须先完成 D4 准入。",
-        "- 下一步：用相同 `view_hash` 计算 MFCC 统计量；改位置/长度/采样率会使 `view_hash` 变化。",
+        f"- 下一步：{'先完成 D4 标签复核/准入，再导出训练清单' if fs else '用相同 view_hash 计算 MFCC 统计量；改位置/长度/采样率会使 view_hash 变化'}。",
         "",
     ]
     return "\n".join(lines) + "\n"

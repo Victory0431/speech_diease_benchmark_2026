@@ -93,3 +93,35 @@
   4. 确认原始数据目录未被写入。
 - 结论：待人工验收
 - 代码提交号：见 `git log --grep "D2"`
+
+## D3（MFCC 统计量与分片缓存）——待验收
+
+- 日期：2026-11-09
+- 施工内容：`features/mfcc.py`、`features/cache.py`、`configs/features/mfcc20_stats.yaml`、
+  `extract-features` 接入 `--features`/`--cache-mode`、`tests/test_feature_cache.py`。
+- 实际执行：
+  - `sddbench extract-features --dataset uaspeech --source 20261109T171421+0800_uaspeech_full_dd025653
+    --preprocess configs/preprocessing/uaspeech_native_smoke.yaml
+    --features configs/features/mfcc20_stats.yaml --limit 12 --cache-mode shared --previews 6
+    --paths configs/paths.local.yaml`
+    → `windows built=12/12`，`features new=12 cached=0 failed=0`，状态 `completed`；
+  - 同命令复跑 → `new=0 cached=12`；
+  - `python -m pytest tests -q` → 40 passed。
+- 证据路径：`artifacts/feature_jobs/20261109T182847+0800_uaspeech_views_head_2s_ecc135d0/`
+  （job.json、feature_config.yaml、windows.csv、inspection.md 第 6 节）；
+  共享缓存 `artifacts/cache/features/mfcc_stats/mfcc_stats_efe488280a7dc9a9/`
+  （meta.json、index.csv 12 行、shard_000.npz 中 x=(12,40)）。
+- 通过项（自检）：
+  - x 形状 `[N,40]` 且全部有限；`n_mfcc=40` 时 80 维且 `feature_key` 改变；
+  - 3 s 有效声音补零到 4 s 与直接 4 s 截取的统计一致；补零帧不进入统计；
+  - `n_frames = 1 + (N - n_fft) // hop`，16 kHz 下 win/hop/n_fft = 400/160/512；
+  - 相同源/视图/配方命中缓存；改配方或位置产生新 key；删除缓存可重算；
+  - 混合 native 采样率在作业前阻断（退出码 3）。
+- 已知限制：仍为 `technical_only`，`admission=pending_review`；未做全量提取，未产生训练标签。
+- 验收步骤建议：
+  1. 打开 `inspection.md` 第 6 节核对配方、维度、缓存路径与命中数；
+  2. 检查 `index.csv` 的 12 个 `window_id` 与 `windows.csv` 一一对应；
+  3. 复跑命令确认 `n_from_cache=12`、`n_new=0`；
+  4. 确认测量前后原始音频 SHA256 不变。
+- 结论：待人工验收
+- 代码提交号：见 `git log --grep "D3"`

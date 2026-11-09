@@ -84,6 +84,73 @@ CLI 新增 `extract-features`：
 
 ---
 
-## D3 —— MFCC 统计量与分片缓存（待施工）
+## D3 —— MFCC 统计量与分片缓存（已完成并推送）
 
-## D4 —— 标签复核、批准清单与第二数据集（待施工）
+### 目标
+在 D2 已锁定的观察窗口上计算固定配方 MFCC，并建立可复用、可失效、可断点续算的特征缓存；
+此阶段仍只做**技术验证**（`technical_only=true`），不产生训练标签。
+
+### 实现
+| 文件 | 作用 |
+| --- | --- |
+| `src/sddbench/features/mfcc.py` | 固定配方解析/校验、`feature_hash`、`feature_key`、transform 缓存、逐窗 MFCC 统计 |
+| `src/sddbench/features/cache.py` | `FeatureCache`（meta/index/shard 原子写）与 `FeatureCacheManager`（按实际 Hz 多缓存懒加载） |
+| `src/sddbench/features/__init__.py` | 包初始化 |
+| `configs/features/mfcc20_stats.yaml` | 20 维 MFCC + mean/std(ddof=0) → 40 维 |
+| `tests/test_feature_cache.py` | 形状/有限性/补零不变性/缓存复用与失效/CLI 端到端/dry-run |
+
+CLI `extract-features` 的 `--features` 从"显式拒绝"改为真实计算；新增
+`--cache-mode run|shared`（默认 run，位于 job 目录内；shared 位于
+`artifacts/cache/features/<config_name>/<feature_key>/`）、`--no-verify-source-hash`。
+单遍解码完成窗口构建与特征提取（`build_view_index(on_view=...)`），不重复读音频。
+
+### 锁定配方（`mfcc20_stats`）
+- 25 ms / 10 ms，periodic Hann，`center=false`，`n_fft=next_power_of_two(win)`（16 kHz 为 512）。
+- `n_mfcc=20`、`n_mels=64`、`power=2`、`htk`、无 mel 归一化、`f_min=0`、`f_max=nyquist`。
+- `log_mels=true`，等价 `log(mel_power + 1e-6)`；DCT-II ortho，含 c0。
+- 统计：仅有效声音帧（补零帧不进入），逐系数 `mean` + `std(ddof=0)` → 40 维 float32。
+- 帧数公式与 torchaudio 对齐：`n_frames = 1 + (N - n_fft) // hop`；`N < n_fft` 报 `too_short_for_frontend`。
+- `feature_hash` 覆盖配方、实现版本（torch/torchaudio 版本、log offset、DCT 约定）、
+  以及**实际采样率推导出的**帧长/帧移/`n_fft`；只改统计图或 P95 不会让缓存失效。
+
+### 缓存布局
+```text
+artifacts/cache/features/mfcc_stats/mfcc_stats_<feature_hash[:16]>/
+├── meta.json      # 配方、实现版本、每个采样率的维度、完成标记
+├── index.csv      # window_id / sample_id / feature_hash / shard / row
+└── shard_000.npz  # x: float32[N, 40]
+```
+- 分片按 2048 条切分；写盘先 `.tmp.npz` 再 `os.replace`，崩溃不会留下半个分片。
+- 存在 `meta.json` + `index.csv` 即视为可复用；删除缓存目录可全量重算。
+- 缓存目录在 `.gitignore` 白名单之外，不进入 Git。
+
+### 实跑（2026-11-09）
+命令：
+```bash
+sddbench extract-features --dataset uaspeech \
+  --source 20261109T171421+0800_uaspeech_full_dd025653 \
+  --preprocess configs/preprocessing/uaspeech_native_smoke.yaml \
+  --features configs/features/mfcc20_stats.yaml \
+  --limit 12 --cache-mode shared --previews 6 \
+  --paths configs/paths.local.yaml
+```
+真实输出：
+- `windows built=12/12`，`features: new=12 cached=0 failed=0`，状态 `completed`；
+- job：`artifacts/feature_jobs/20261109T182847+0800_uaspeech_views_head_2s_ecc135d0/`；
+- 缓存：`mfcc_stats_efe488280a7dc9a9`，16000 Hz、dim=40、12 条 / 1 个分片；
+- `inspection.md` 第 6 节显示 MFCC 配方、维度、命中/新增/失败与缓存路径。
+- 复跑同一命令：`new=0 cached=12`，证明缓存命中；改 `n_mfcc=40` 产生新 `feature_key`（80 维）。
+- 测试：`python -m pytest tests -q` → **40 passed**。
+
+### 决策与偏差
+- 单遍解码（窗口 + 特征同遍完成）优先于"先写窗口表再二次解码"，代价是 D2 的
+  纯窗口 dry-run 与 D3 实际计算共用同一入口；`--dry-run` 仍可只看窗口不计算特征。
+- `window_id` 由 `scan_id|sample_id|w0|view_hash[:12]` 组成；D2 初版漏了 scan 前缀，
+  已修正，保证换源扫描不会误命中旧缓存。
+- 缓存键只按"配方 + 实际 Hz"区分；同一配方不同窗口天然由 `window_id` 区分。
+- 补零不改变 MFCC 统计（以 3 s vs 4 s 补零到 4 s 的单测验证），但真正改变截取内容会改变特征。
+- `feature_hash` 不含数据集名与路径，便于第二库复用同一缓存代码。
+
+---
+
+## D4 —— 标签复核、批准清单与第二数据集（施工中）
