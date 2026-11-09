@@ -242,3 +242,31 @@
   4. 核对 `run.json` 的 prepared/split/cache key/git commit 与本机一致。
 - 结论：待人工验收
 - 代码提交号：`1246735`；结果与文档提交见紧随其后的 docs 提交
+
+## D7（参数扫描与跨运行汇总）——待验收
+
+- 日期：2026-11-09
+- 施工内容：`modeling/sweep.py`、`cli.py` 的 `sweep`/`summarize` 子命令、
+  `configs/sweeps/uaspeech_mlp_dropout.yaml`、`results_summary/`、新增 1 个测试。
+- 实际执行：
+  - `sweep --grid configs/sweeps/uaspeech_mlp_dropout.yaml` → 2/2 completed
+    （dropout 0.0 与 0.4，各一个独立 run）；
+  - `summarize --runs artifacts/runs --out results_summary` → 3 行；
+  - `python -m pytest tests -q` → 58 passed。
+- 结果：三次运行的 test subject balanced accuracy 均为 0.833，
+  AUROC 均为 0.889；差异只出现在 window 层（0.696–0.699）与最佳 epoch（4/6）。
+- 证据路径：
+  - `artifacts/sweeps/uaspeech_mlp_dropout_v1/jobs.csv`；
+  - `results_summary/summary.csv`、`results_summary/summary.md`（入库的聚合结果）。
+- 通过项（自检）：
+  - 每个组合都有独立 run 目录与完整结果包；
+  - `jobs.csv` 每完成一个组合就落盘；
+  - 未知网格键报错；`--max-runs` 可限制组合数；
+  - 汇总只读聚合指标，不含逐录音预测与患者级清单；
+  - 汇总表可由 `metrics.json` 重算。
+- 已知限制：单 seed；不支持并行；尚无置信区间。
+- 验收步骤建议：
+  1. 打开 `results_summary/summary.md` 对照 `artifacts/runs/<run_id>/metrics.json`；
+  2. 用 `--set model.dropout=0.1 --max-runs 1` 再跑一次，确认新 run 目录与 jobs 记录；
+  3. 删除一个 run 目录后重跑 `summarize`，确认汇总减少一行且不报错。
+- 结论：待人工验收

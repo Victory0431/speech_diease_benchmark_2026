@@ -6,9 +6,10 @@
 > 本仓库当前完成了**数据层（D1–D5）+ 模型层（D6）**：把数据集摸清楚、量清楚、留证据，
 > 把"看哪一段声音"固化成可复现的窗口索引，在有效声音上算出可缓存的 MFCC 统计量，
 > 接入第二个数据集、建立"标签未确认就拒绝出训练清单"的准入门禁，
-> 按说话人隔离地划出 train/val/test，并用缓存的 MFCC 跑出**第一条可复现的 MLP 基线**
-> （test 6 人，balanced accuracy 0.833，AUROC 0.889）。
-> 参数扫描与多数据集汇总（`sweep`/`summarize`）尚未开始。
+> 按说话人隔离地划出 train/val/test，用缓存的 MFCC 跑出**第一条可复现的 MLP 基线**
+> （test 6 人，balanced accuracy 0.833，AUROC 0.889），
+> 并支持用一行命令扫参数、把所有运行汇成对比表。
+> 尚待完成：多 seed 置信区间、把第二个数据集纳入训练、自动生成汇总页。
 
 ---
 
@@ -53,10 +54,10 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 命令 | `inspect-file`（单文件核查）、`stats`（quick/full 统计，可断点续扫）、`dataset-report`（重建报告）、`extract-features`（窗口索引 + MFCC 统计 + 分片缓存）、`prepare`（标签复核 + 人员隔离清单，未确认则阻断）、`split`（按说话人隔离的分层划分）、`run`（冻结特征 MLP 训练 + 结果包） |
-| 数据层模块 | `scan`（枚举分类）、`decoders`（probe+解码，soundfile 优先、ffprobe 兜底）、`audit`（并行审计+质量摘要）、`stats`（聚合）、`adapters/uaspeech` + `adapters/parkinson_kcl`（命名与归属解释）、`audio`（通道/裁剪/重采样）、`windows`（位置规则+`view_hash`）、`prepare`（确定性分层抽样）、`admission`（复核/隔离/批准清单）、`split`（人员隔离分层划分）、`features/mfcc`（固定配方）、`features/cache`（分片/续算/复用）、`modeling/*`（特征读取、指标、MLP、实验配置、训练、报告） |
+| 命令 | `inspect-file`（单文件核查）、`stats`（quick/full 统计，可断点续扫）、`dataset-report`（重建报告）、`extract-features`（窗口索引 + MFCC 统计 + 分片缓存）、`prepare`（标签复核 + 人员隔离清单，未确认则阻断）、`split`（按说话人隔离的分层划分）、`run`（冻结特征 MLP 训练 + 结果包）、`sweep`（参数网格）、`summarize`（跨运行汇总） |
+| 数据层模块 | `scan`（枚举分类）、`decoders`（probe+解码，soundfile 优先、ffprobe 兜底）、`audit`（并行审计+质量摘要）、`stats`（聚合）、`adapters/uaspeech` + `adapters/parkinson_kcl`（命名与归属解释）、`audio`（通道/裁剪/重采样）、`windows`（位置规则+`view_hash`）、`prepare`（确定性分层抽样）、`admission`（复核/隔离/批准清单）、`split`（人员隔离分层划分）、`features/mfcc`（固定配方）、`features/cache`（分片/续算/复用）、`modeling/*`（特征读取、指标、MLP、实验配置、训练、报告、扫描/汇总） |
 | 产物 | `files.csv`、`statistics.json`、`meta.json`、`issues.csv`、`length_candidates*.csv`、`report.md`、`figures/*.png`；D2/D3 追加 `windows.csv`、`job.json`、`inspection.md`、可审听预览、`cache/features/mfcc_stats/<feature_key>/`（`meta.json` + `index.csv` + `shard_*.npz`）；D4 追加 `label_review_status.csv`、`admission.json`、`admission.md`、通过时才有 `manifest.csv`；D5 追加 `split.csv`、`split.json`、`split.md`；D6 追加 `runs/<run_id>/`（`run.json`、`metrics.json`、`predictions_*`、`best.pt`、`report.md`、`figures/`） |
-| 测试 | 57 项合成数据测试全绿（不含任何真实患者音频） |
+| 测试 | 58 项合成数据测试全绿（不含任何真实患者音频） |
 | 设计约束 | 适配器不碰解码；统计只报事实不自动选参数；标签未核验前不产出分类清单 |
 
 ### UAspeech 全库统计结果（full 模式，逐条解码）
@@ -167,6 +168,11 @@ sddbench run --config configs/experiments/uaspeech_mfcc_mlp_baseline.yaml \
 sddbench run --config configs/experiments/uaspeech_mfcc_mlp_baseline.yaml \
     --set model.dropout=0.0 --set training.seed=1 --paths configs/paths.local.yaml
 
+# D7：按网格扫参（每个组合一个 run），再把所有 run 汇成对比表
+sddbench sweep --config configs/experiments/uaspeech_mfcc_mlp_baseline.yaml \
+    --grid configs/sweeps/uaspeech_mlp_dropout.yaml --paths configs/paths.local.yaml
+sddbench summarize --runs artifacts/runs --out results_summary --repo-root .
+
 # 第二个数据集：统计 + 4 s 技术验证
 sddbench stats --dataset parkinson_kcl --mode full --paths configs/paths.local.yaml
 sddbench extract-features --dataset parkinson_kcl --source <KCL_SCAN_ID> \
@@ -199,7 +205,7 @@ sddbench extract-features --dataset parkinson_kcl --source <KCL_SCAN_ID> \
 │   │   ├── split.py           # 人员隔离的确定性分层划分
 │   │   └── adapters/          # 数据集适配器（只解释命名/归属，不碰音频）
 │   ├── features/              # MFCC 固定配方 + 分片缓存
-│   ├── modeling/              # 特征读取、指标、MLP、实验配置、训练、结果报告
+│   ├── modeling/              # 特征读取、指标、MLP、实验配置、训练、扫描/汇总、报告
 │   └── reporting/             # markdown 报告 + 图 + 作业预检
 ├── configs/
 │   ├── paths.example.yaml     # 路径模板（真实 paths.local.yaml 不入库）
@@ -207,7 +213,8 @@ sddbench extract-features --dataset parkinson_kcl --source <KCL_SCAN_ID> \
 │   ├── datasets/parkinson_kcl_v1.yaml
 │   ├── preprocessing/         # native 小样 / 16 kHz 候选配置
 │   ├── features/              # mfcc20_stats.yaml
-│   └── experiments/           # 基线实验配置（数据 ID、划分 ID、模型、训练）
+│   ├── experiments/           # 基线实验配置（数据 ID、划分 ID、模型、训练）
+│   └── sweeps/                # 参数网格示例
 ├── docs/
 │   ├── construction_plan.md   # 宏观架构与分阶段施工说明
 │   ├── data_layer_plan.md     # 数据层补充设计（UAspeech 先行）
@@ -220,7 +227,8 @@ sddbench extract-features --dataset parkinson_kcl --source <KCL_SCAN_ID> \
 │   ├── prepared/<task>/...    # 准入证据（manifest.csv 本机再生，不入库）
 │   ├── splits/<task>/...      # 划分结果 split.csv/json/md
 │   └── runs/<run_id>/...      # 模型结果包（权重/预测/指标/图/报告，本机）
-└── tests/                     # 合成音频 fixture 测试
+├── results_summary/           # 入库的聚合结果（summary.csv/md，无逐录音数据）
+└── tests/                     # 合成数据 fixture 测试
 ```
 
 ### 什么进 Git，什么不进
@@ -239,6 +247,7 @@ sddbench extract-features --dataset parkinson_kcl --source <KCL_SCAN_ID> \
 | `configs/paths.local.yaml` | ❌ | 含本机绝对路径 |
 | 缓存/权重（`*.npz`、`*.pt`、`*.npy` 等） | ❌ | 体积大；本机可再生 |
 | `artifacts/runs/**` | ❌ | 含权重、逐窗口预测与患者级输入快照；只把指标摘要写进文档/汇总 |
+| `results_summary/summary.csv`、`summary.md` | ✅ | 聚合指标，KB 级，可由各 run 的 `metrics.json` 重算 |
 
 `.gitignore` 对 `artifacts/` 采用**白名单**：默认全部忽略，只逐个放行上面那份总览清单，
 再加一条"大文件兜底"规则，避免以后误提交。
@@ -254,9 +263,8 @@ sddbench extract-features --dataset parkinson_kcl --source <KCL_SCAN_ID> \
 - **已实现**：`inspect-file`、`stats`（quick/full）、`dataset-report`、
   `extract-features`（窗口索引 + MFCC 统计 + 缓存，支持 `--mic`）、
   `prepare`（标签复核/人员隔离/批准清单）、`split`（按人员隔离的分层划分）、
-  `run`（冻结特征 MLP 训练与结果包）。
-- **未实现**：`sweep`（参数网格）、`summarize`（多运行汇总）、`cache`、`dashboard`。
-  这些命令会返回非零并明确提示"未实现"。
+  `run`（冻结特征 MLP 训练与结果包）、`sweep`（参数网格）、`summarize`（跨运行汇总）。
+- **未实现**：`cache`、`dashboard`；多 seed 置信区间、第二个数据集的训练接入尚未开始。
 - **准入现状**：UAspeech 已按人工确认的目录标签与 **M3** 麦克风通过准入，
   得到 21,126 行 manifest（28 人）；KCL 仍是 `pending`，真实运行被阻断。
   UAspeech 选 M3 是工程基线（M2 在 Healthy 组缺录音），不是研究结论。
@@ -272,6 +280,8 @@ sddbench extract-features --dataset parkinson_kcl --source <KCL_SCAN_ID> \
    `artifacts/prepared/<task_id>/<job_id>/admission.md`、
    `artifacts/splits/<task_id>/<split_id>/split.md`、
    `artifacts/runs/<run_id>/report.md` 与缓存 `index.csv` 复核数字与决策点。
-2. 实验层（D7）：`sweep` 按网格顺序跑多个 `run`，`summarize` 把 `metrics.json`
-   汇成对比表；数据端参数（mic/窗口/采样率）与模型端参数（hidden/dropout/lr）都走同一套配置。
-3. 接入更多数据集：每个库只需适配器 + 标签复核 + prepared/split ID，再复制一份实验配置。
+2. 多 seed 与不确定性（D8）：同一配置跑 3–5 个 seed，按人员重采样估计置信区间，
+   再决定哪些超参差异值得继续追。
+3. 接入更多数据集（D9）：每个库只需适配器 + 标签复核 + prepared/split ID，
+   再复制一份实验配置；KCL 的标签复核与 ID22 命名问题在接入时综合处理。
+4. 汇总页（D10）：把 `results_summary` 渲染成一页可浏览的 HTML/表格。

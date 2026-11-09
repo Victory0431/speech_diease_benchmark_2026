@@ -90,6 +90,7 @@ from .modeling.experiment import (
 )
 from .modeling.features import FeatureLoadError
 from .modeling.trainer import RunError, load_run_data, run_experiment
+from .modeling.sweep import SweepError, load_sweep, run_sweep, summarize_runs
 from .features.cache import FeatureCacheManager
 from .features.mfcc import (
     FeatureConfigError,
@@ -99,7 +100,7 @@ from .features.mfcc import (
     normalize_feature_config,
 )
 
-NOT_IMPLEMENTED = ("sweep", "cache", "train", "summarize", "dashboard")
+NOT_IMPLEMENTED = ("cache", "train", "dashboard")
 
 
 def _now_iso() -> str:
@@ -430,6 +431,72 @@ def cmd_run(args) -> int:
           f"sens={test_m['sensitivity']} spec={test_m['specificity']} "
           f"auroc={test_m['auroc']}")
     print(f"[run] report: {job['outputs']['report']}")
+    return 0
+
+
+def cmd_sweep(args) -> int:
+    """D7: run an ordered grid of experiments and record one row per attempt."""
+    paths = load_paths(args.paths)
+    repo_root = Path(args.repo_root).resolve() if args.repo_root else Path.cwd()
+    workspace = Path(paths["workspace_root"])
+    try:
+        cfg = load_experiment(args.config)
+        for assignment in args.set or []:
+            set_override(cfg, assignment)
+        sweep = load_sweep(args.grid)
+        from .modeling.experiment import expand_grid
+        combos = expand_grid(cfg, sweep["axes"])
+        if args.max_runs:
+            combos = combos[:args.max_runs]
+        print(f"[sweep] experiment={cfg['experiment_id']} "
+              f"axes={sweep['axes']} planned_runs={len(combos)}")
+        if args.dry_run:
+            for i, combo in enumerate(combos, 1):
+                changed = {k: combo[s][f] for k, v in sweep["axes"].items()
+                           for s in [k.split('.', 1)[0]] for f in [k.split('.', 1)[1]]
+                           if combo[s][f] != cfg[s][f]}
+                print(f"[sweep]   {i:02d}: {changed}")
+            print("[sweep] DRY-RUN: nothing trained.")
+            return 0
+        out_dir, jobs = run_sweep(
+            cfg, sweep, workspace, repo_root,
+            max_runs=args.max_runs,
+            on_progress=lambda i, n, ov: print(f"[sweep] {i}/{n} {ov}"))
+    except (ExperimentConfigError, SweepError, RunError) as e:
+        raise ConfigError(str(e)) from e
+    completed = [j for j in jobs if j["status"] == "completed"]
+    failed = [j for j in jobs if j["status"] != "completed"]
+    print(f"[sweep] completed={len(completed)} failed={len(failed)}")
+    print(f"[sweep] jobs: {out_dir / 'jobs.csv'}")
+    for row in completed:
+        print(f"[sweep]   {row['run_id']} subj_bacc="
+              f"{row['test_subject_balanced_accuracy']:.3f} {row['overrides']}")
+    for row in failed:
+        print(f"[sweep]   FAILED {row['overrides']}: {row['error']}")
+    return 0 if not failed else 1
+
+
+def cmd_summarize(args) -> int:
+    """D7: collect aggregate metrics of many runs into one comparison table."""
+    repo_root = Path(args.repo_root).resolve() if args.repo_root else Path.cwd()
+    if args.runs:
+        runs_root = Path(args.runs).expanduser().resolve()
+    elif args.paths:
+        paths = load_paths(args.paths)
+        runs_root = Path(paths["workspace_root"]) / "runs"
+    else:
+        raise ConfigError("summarize needs --runs or --paths")
+    if not runs_root.is_dir():
+        raise ConfigError(f"runs directory not found: {runs_root}")
+    out_dir = (Path(args.out).expanduser().resolve() if args.out
+               else repo_root / "results_summary")
+    frame = summarize_runs(runs_root, out_dir)
+    print(f"[summarize] runs={len(frame)} from {runs_root}")
+    print(f"[summarize] summary: {out_dir / 'summary.csv'} / summary.md")
+    if len(frame):
+        top = frame.iloc[0]
+        print(f"[summarize] top: {top['run_id']} "
+              f"test_subject_bacc={top['test_subject_balanced_accuracy']}")
     return 0
 
 
@@ -925,6 +992,30 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--paths", required=True)
     sp.add_argument("--repo-root", default=None)
     sp.set_defaults(func=cmd_split)
+
+    sp = sub.add_parser(
+        "sweep",
+        help="run an ordered parameter grid, one result pack per combination")
+    sp.add_argument("--config", required=True, help="base experiment config yaml")
+    sp.add_argument("--grid", required=True, help="sweep yaml with an `axes` mapping")
+    sp.add_argument("--set", action="append", metavar="KEY=VALUE",
+                    help="base override applied to every combination (repeatable)")
+    sp.add_argument("--max-runs", type=int, default=None,
+                    help="cap the number of combinations (useful for smoke runs)")
+    sp.add_argument("--dry-run", action="store_true",
+                    help="print the grid; do not train")
+    sp.add_argument("--paths", required=True)
+    sp.add_argument("--repo-root", default=None)
+    sp.set_defaults(func=cmd_sweep)
+
+    sp = sub.add_parser(
+        "summarize",
+        help="collect aggregate metrics from many runs into summary.csv/md")
+    sp.add_argument("--runs", default=None, help="runs directory (default: <workspace>/runs)")
+    sp.add_argument("--out", default=None, help="output directory (default: ./results_summary)")
+    sp.add_argument("--paths", default=None, help="required only when --runs is omitted")
+    sp.add_argument("--repo-root", default=None)
+    sp.set_defaults(func=cmd_summarize)
 
     sp = sub.add_parser(
         "run",

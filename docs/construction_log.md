@@ -448,3 +448,56 @@ test subject 混淆矩阵：control 3 人中 2 人判对；disorder 3 人全部�
 - MLP 只看全局统计量，丢弃时间顺序；
 - 4 s head 窗口对约 42.6% 的录音补零；
 - 结果包中的 `inputs/` 含 manifest/split 快照，属患者级清单，只留在本机，不入库。
+
+---
+
+## D7：参数扫描与跨运行汇总（2026-11-09）
+
+### 本阶段目的
+让"换参数做实验"变成一条命令，而不是手工复制配置、手工抄结果：
+`sweep` 按网格顺序跑多个 `run`，每个组合仍有独立结果包；
+`summarize` 把所有 `metrics.json` 汇成一张对比表，只保留聚合指标。
+
+### 实现
+
+| 文件 | 内容 |
+| --- | --- |
+| `src/sddbench/modeling/sweep.py` | `load_sweep`（校验 `axes`）、`run_sweep`（逐个组合训练、每跑完一个就写 `jobs.csv`、失败记录原因但不中断）、`summarize_runs`（扫描 `runs/*/metrics.json` + `run.json` + `config.yaml`，输出 `summary.csv/md`） |
+| `src/sddbench/cli.py` | `sweep --config --grid [--set] [--max-runs] [--dry-run]`、`summarize [--runs] [--out] [--paths]` |
+| `configs/sweeps/uaspeech_mlp_dropout.yaml` | 示例网格：`model.dropout: [0.0, 0.4]` |
+| `results_summary/` | 提交到仓库的聚合结果（3 行），不含权重/预测/患者级清单 |
+| `tests/test_modeling.py` | 新增 `test_sweep_and_summarize`：2 个组合全部完成、`jobs.csv`/`sweep.json` 存在、汇总 2 行且主指标非空 |
+
+约定：
+- 网格只改 `--config` 里已有的键；未知键直接报错；
+- 每个组合都完整走 `run` 的同一套数据校验、人员隔离、早停与结果包，不做特殊路径；
+- `jobs.csv` 记录 `index/status/run_id/run_dir/overrides/指标/error`，中途崩掉也能看到进度；
+- 汇总按 test subject balanced accuracy 降序，但只用于浏览，不当作统计结论。
+
+### 实跑
+
+```bash
+sddbench sweep --config configs/experiments/uaspeech_mfcc_mlp_baseline.yaml \
+  --grid configs/sweeps/uaspeech_mlp_dropout.yaml --paths configs/paths.local.yaml
+sddbench summarize --runs artifacts/runs --out results_summary --repo-root .
+```
+
+- sweep 目录：`artifacts/sweeps/uaspeech_mlp_dropout_v1/jobs.csv`（2/2 completed）
+- 三次运行（含 D6 基线）的 test subject 指标：
+
+| run | dropout | best epoch | subject bAcc | sens | spec | AUROC | window bAcc |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `..._s0_a522c1`（基线） | 0.2 | 6 | 0.833 | 1.000 | 0.667 | 0.889 | 0.699 |
+| `..._s0_f884b4` | 0.0 | 4 | 0.833 | 1.000 | 0.667 | 0.889 | 0.698 |
+| `..._s0_82e407` | 0.4 | 6 | 0.833 | 1.000 | 0.667 | 0.889 | 0.696 |
+
+结论：在 6 位测试说话人上，dropout 0/0.2/0.4 没有可分辨差异；这符合预期，
+也说明当前 test 粒度不足以支持"哪个超参更好"的结论。它的价值是证明扫描与汇总流水线可用。
+
+### 测试
+`python -m pytest tests -q` → **58 passed**。
+
+### 已知限制
+- 单 seed、6 位测试说话人，排序不稳定；
+- 不支持并行/断点续跑；失败会记录但需要人工重跑；
+- 汇总表不含置信区间与多 seed 聚合（D8）。

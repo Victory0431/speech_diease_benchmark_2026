@@ -1,0 +1,5 @@
+# D7 示例：只扫一个模型端参数，用来验证 sweep/summarize 的闭环。
+# 每个组合都会得到独立 run 目录；数据划分不变，主指标仍是 test subject balanced accuracy。
+sweep_id: uaspeech_mlp_dropout_v1
+axes:
+  model.dropout: [0.0, 0.4]

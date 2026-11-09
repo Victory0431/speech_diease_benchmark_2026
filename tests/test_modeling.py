@@ -22,6 +22,7 @@ from sddbench.modeling.experiment import (
 from sddbench.modeling.features import FeatureLoadError, load_features
 from sddbench.modeling.metrics import auroc, binary_metrics, confusion
 from sddbench.modeling.mlp import MLP
+from sddbench.modeling.sweep import run_sweep, summarize_runs
 from sddbench.modeling.trainer import RunError, load_run_data, run_experiment
 
 REPO = Path(__file__).resolve().parents[1]
@@ -213,3 +214,21 @@ def test_person_leakage_is_rejected(tmp_path):
     cfg = load_experiment(_experiment_cfg(tmp_path))
     with pytest.raises(RunError, match="leakage"):
         run_experiment(cfg, workspace, repo, run_root=runs)
+
+
+def test_sweep_and_summarize(tmp_path):
+    repo, workspace, runs = _build_workspace(tmp_path)
+    cfg = load_experiment(_experiment_cfg(tmp_path))
+    sweep = {"sweep_id": "demo_sweep", "axes": {"model.dropout": [0.0, 0.5]}}
+    out_dir, jobs = run_sweep(cfg, sweep, workspace, repo, run_root=runs)
+    assert len(jobs) == 2
+    assert all(job["status"] == "completed" for job in jobs)
+    assert (out_dir / "jobs.csv").is_file()
+    sweep_doc = json.loads((out_dir / "sweep.json").read_text(encoding="utf-8"))
+    assert sweep_doc["axes"] == {"model.dropout": [0.0, 0.5]}
+
+    frame = summarize_runs(runs, tmp_path / "summary")
+    assert len(frame) == 2
+    assert frame["test_subject_balanced_accuracy"].notna().all()
+    assert (tmp_path / "summary" / "summary.csv").is_file()
+    assert (tmp_path / "summary" / "summary.md").is_file()
