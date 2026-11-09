@@ -1,0 +1,21 @@
+# 正式基线 v1：UAspeech 原生 16 kHz、单通道、头部 4 s。
+# 依据 D1：P90=3.88 s，4 s 可覆盖约 90% 录音；补零不伪造静音，MFCC 只统计有效帧。
+schema_version: "1.0"
+name: uaspeech_native_4s_head
+description: "UAspeech baseline v1: native 16 kHz, head 4 s, right zero pad"
+profile: baseline_v1
+sample_rate_policy: native
+allow_mixed_native: false
+target_sample_rate: null
+channel_policy: select
+channel_index: 0
+view_mode: single_segment
+observe_seconds: 4.0
+window_seconds: 4.0
+position: head
+crop_seed: 0
+short_policy: right_zero_pad
+amplitude_normalization: none
+frame_ms: 25.0
+hop_ms: 10.0
+crop_algorithm_version: "1.0"

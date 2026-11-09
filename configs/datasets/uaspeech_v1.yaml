@@ -23,5 +23,9 @@ selection:                         # D4 准入规则（人工决策，不自动�
   one_per_origin: true             # speaker+block+prompt 的多 mic 文件只保留一条
   variant: original
   elicitation: unknown             # 词项语义未核验前不冒充朗读/访谈
-labels: null                       # 标签映射未核验，禁止填写
+labels:
+  # 2026-11-09 用户确认：本地 Healthy/Disorder 目录即健康/疾病标签。
+  mapping: {Healthy: control, Disorder: disorder}
+  class_order: [control, disorder]
+  positive_class: disorder
 evaluation_unit: subject

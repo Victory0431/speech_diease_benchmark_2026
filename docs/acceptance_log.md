@@ -172,3 +172,39 @@
   5. 确认 `artifacts/prepared/*` 下没有 `manifest.csv`，且源数据目录未变化。
 - 结论：待人工验收
 - 代码提交号：见 `git log --grep "D4"`
+
+## D5（标签确认、M3 选择与人员隔离划分）——待验收
+
+- 日期：2026-11-09
+- 施工内容：`data/split.py`、`reporting/split_report.py`、`cli.py` 的 `split` 子命令与
+  `extract-features --mic`、`configs/preprocessing/uaspeech_native_4s_head.yaml`、
+  `tests/test_split.py`；UAspeech 标签复核改为 confirmed。
+- 实际执行：
+  - `prepare --mic M3` → `approved`，prepared
+    `20261109T193404+0800_uaspeech_prepare`，manifest 21,126 行 / 28 人；
+  - `extract-features ... --mic M3` → `built=21126/21126`，
+    `new=21126 cached=0 failed=0`，job
+    `20261109T193628+0800_uaspeech_views_head_4s_4ef5732f`；
+  - `split --seed 0` → `20261109T193524+0800_seed0_f7eb7f76`，
+    train 12,711/17 人、val 3,825/5 人、test 4,590/6 人；
+  - `python -m pytest tests -q` → 51 passed。
+- 证据路径：
+  - `artifacts/label_review/uaspeech_label_review.csv`（28 行 confirmed）；
+  - `artifacts/prepared/uaspeech_v1/20261109T193404+0800_uaspeech_prepare/`
+    （`admission.md/json`、`label_review_status.csv`）；
+  - `artifacts/splits/uaspeech_v1/20261109T193524+0800_seed0_f7eb7f76/`
+    （`split.csv`、`split.json`、`split.md`）。
+- 通过项（自检）：
+  - 同一 group_id 只出现在一个 split；三集人员集合两两不相交；
+  - 每个 split 内 control/disorder 都有样本；
+  - 同 seed 重跑结果一致，换 seed 结果变化；
+  - 类别过小、比例和不为 1、同一 subject 两个 label 均报错；
+  - `--mic` 过滤发生在抽样前，未命中会直接失败而不是产出空表。
+- 已知限制：val 仅 5 人，单次结果方差大；正式比较需多 seed。
+- 验收步骤建议：
+  1. 打开 `split.md`，核对 17/5/6 人与三集类别分布；
+  2. 用 `split.csv` 与 `manifest.csv` 做一次 join，确认无人员跨集；
+  3. 复跑同一命令确认除时间戳外数字一致；
+  4. 换 `--seed 1` 确认生成新 split_id 且旧目录不被覆盖。
+- 结论：待人工验收
+- 代码提交号：见 `git log --grep "D5"`

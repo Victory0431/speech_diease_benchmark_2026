@@ -259,3 +259,91 @@ sddbench prepare --dataset parkinson_kcl \
 - `ID22` 命名冲突不自动去重：两条时长/哈希不同，不能假定是同一条录音。
 - `manifest.csv` 不提交 Git（可能很大）；`admission.md/json`、复核模板等小体积证据提交。
 - `.gitignore` 新增 KCL 统计白名单与 D4 准入证据白名单，仍不包含任何音频/特征缓存。
+
+---
+
+## D5：标签确认、M3 基线选择与人员隔离划分（2026-11-09）
+
+### 本阶段目的
+D4 解决了"没有 confirmed 标签就不出训练清单"；D5 解决"有了清单以后，怎样在不泄漏说话人的前提下，
+把数据分成 train/val/test，并把 UAspeech 第一条真实基线锁成可复现的 ID"。本阶段仍不训练。
+
+### 关键决策
+
+1. **标签按目录确认（用户 2026-11-09 明确）**
+   - UAspeech 本地 `Healthy/` → `control`，`Disorder/` → `disorder`；
+   - `class_order = [control, disorder]`，`positive_class = disorder`；
+   - `artifacts/label_review/uaspeech_label_review.csv` 由 28 行 `pending` 改为 28 行
+     `confirmed`，证据写"用户 2026-11-09 确认：Healthy/Disorder 目录即健康/疾病标签"，
+     `confirmed_subject_id` 用 speaker token（CF02…M16）。
+   - 之前 D1/D3 提到的"C 前缀疑似倒置"降级为历史观察，不再作为阻断理由；
+     `docs/datasets/uaspeech.md` 保留原始记录，供以后追溯。
+
+2. **为什么还要关心麦克风（工程原因，不是研究原因）**
+   - UAspeech 每条录音在 7 个麦克风下各有一份：`speaker|block|prompt` 相同、mic 不同，
+     内容高度重复。如果全部收进训练集，同一句话会出现 7 次；更糟的是同一 origin
+     可能被分到不同 split，造成"同一句话跨训练/测试"的泄漏。
+   - D4 的 `selection.mic` + `one_per_origin=true` 就是解决这个问题的：
+     每个 `speaker|block|prompt` 只保留一条，且必须显式声明用哪个麦克风。
+   - 本次选 **M3**，依据是 M3/M5/M6/M7 覆盖全部 28 人；M2 在 Healthy 组只有 7,610 条。
+     M3 只是"第一条技术基线"的默认值，不是研究结论；换 mic 会得到新的 prepared_id。
+
+3. **准入结果**：`prepare --mic M3` 通过，写出 21,126 行 approved manifest，
+   28 位 subject，control 11,181 / disorder 9,945，origin 唯一。
+
+### 实现
+
+| 文件 | 内容 |
+| --- | --- |
+| `src/sddbench/data/split.py` | `assign_splits(manifest, seed, fractions)`：以 `group_id`（人员）为分配单位，类内按 `sha256(seed|subject)` 排序，最大余数法分配；每 split 至少 1 人；同一 subject 不得跨 split；同一 subject 两个 label 直接报错 |
+| `src/sddbench/reporting/split_report.py` | `render_split(job)`：中文划分报告（人数/条数/类别分布/分配明细） |
+| `src/sddbench/cli.py` | 新增 `split` 子命令；`extract-features` 增加 `--mic`（在抽样前过滤，未命中直接报错） |
+| `configs/preprocessing/uaspeech_native_4s_head.yaml` | 正式基线预处理：native 16 kHz、head 4 s、右补零、`baseline_v1` |
+| `configs/datasets/uaspeech_v1.yaml` | 标签映射改为 control/disorder |
+| `tests/test_split.py` | 4 个测试：人员隔离+分层、确定性与 seed 敏感、类别过小/比例错误、同人双标签报错 |
+
+划分规则（可复现）：
+- 60/20/20，按 label 分层，再在类内按 `sha256(f"{seed}|{group_id}")` 排序后切分；
+- 只改 seed 或比例会产生新的 `split_id`，不覆盖旧目录；
+- 只改 dropout 等模型参数**不**重新划分。
+
+### 实跑
+
+```bash
+sddbench prepare --dataset uaspeech \
+  --source 20261109T171421+0800_uaspeech_full_dd025653 \
+  --mic M3 --paths configs/paths.local.yaml
+```
+- prepared job：`20261109T193404+0800_uaspeech_prepare`
+- `status=approved`，`manifest.csv` 21,126 行、28 subjects、origin 唯一
+- 类别：control 11,181 / disorder 9,945
+
+```bash
+sddbench extract-features --dataset uaspeech \
+  --source 20261109T171421+0800_uaspeech_full_dd025653 \
+  --preprocess configs/preprocessing/uaspeech_native_4s_head.yaml \
+  --features configs/features/mfcc20_stats.yaml \
+  --mic M3 --cache-mode shared --paths configs/paths.local.yaml
+```
+- job：`20261109T193628+0800_uaspeech_views_head_4s_4ef5732f`
+- `mic filter 'M3': 21126/143290 rows`
+- `windows built=21126/21126`；`features new=21126 cached=0 failed=0`；约 39.3 s
+- 共享缓存 key：`mfcc_stats_efe488280a7dc9a9`（40 维）
+
+```bash
+sddbench split --dataset uaspeech --prepared 20261109T193404+0800_uaspeech_prepare \
+  --seed 0 --paths configs/paths.local.yaml
+```
+- split：`20261109T193524+0800_seed0_f7eb7f76`，21,126 条 / 28 人
+- train 12,711 条 / 17 人（control 9 + disorder 8）
+- val 3,825 条 / 5 人（control 3 + disorder 2）
+- test 4,590 条 / 6 人（control 3 + disorder 3）
+- 硬断言：三集人员互斥；三集都同时含 control 与 disorder。
+
+### 测试
+`python -m pytest tests -q` → **51 passed**（D4 的 47 + D5 的 4）。
+
+### 已知限制
+- split 只按比例分层，未做"每类每集至少 N 人"的更高要求；当前 28 人下 val 只有 5 人，
+  指标方差会较大，正式结论需要多 seed / 人员级置信区间。
+- 尚未实现 train/run；模型层在 D6。

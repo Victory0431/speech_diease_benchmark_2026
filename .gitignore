@@ -81,6 +81,13 @@ artifacts/inventory/parkinson_kcl/*/**
 !artifacts/prepared/*/*/task.yaml
 !artifacts/prepared/*/*/provenance.json
 
+# ---- D5 划分协议与结果（小体积、不含音频）----
+!artifacts/splits/
+!artifacts/splits/*/
+!artifacts/splits/*/*/
+!artifacts/splits/*/*/split.json
+!artifacts/splits/*/*/split.md
+
 # ---- 大文件兜底（即使将来有人改白名单也拦住）----
 # 逐文件清单（73MB）与断点续扫日志（119MB）属于可再生大文件
 artifacts/**/files.csv

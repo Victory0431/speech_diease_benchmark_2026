@@ -52,6 +52,8 @@ from .data.schema import (
 )
 from .data.stats import collect_statistics
 from .data.prepare import eligible_rows, stratified_sample
+from .data.split import SplitError, assign_splits
+from .reporting.split_report import render_split
 from .data.admission import (
     AdmissionError,
     STATUS_APPROVED,
@@ -90,7 +92,7 @@ from .features.mfcc import (
     normalize_feature_config,
 )
 
-NOT_IMPLEMENTED = ("split", "run", "sweep", "cache", "train", "summarize", "dashboard")
+NOT_IMPLEMENTED = ("run", "sweep", "cache", "train", "summarize", "dashboard")
 
 
 def _now_iso() -> str:
@@ -330,6 +332,55 @@ def cmd_prepare(args) -> int:
     return 3
 
 
+def cmd_split(args) -> int:
+    """D5: deterministic person-disjoint, label-stratified split."""
+    paths = load_paths(args.paths)
+    repo_root = Path(args.repo_root).resolve() if args.repo_root else Path.cwd()
+    task_cfg = _load_task_config(repo_root, args.dataset, args.task)
+    task_id = str(task_cfg.get("task_id") or f"{args.dataset}_v1")
+    prepared_dir = workspace_dir(paths, "prepared", task_id, args.prepared, create=False)
+    manifest_file = prepared_dir / "manifest.csv"
+    if not manifest_file.is_file():
+        raise ConfigError(f"approved manifest not found: {manifest_file}")
+    manifest = pd.read_csv(manifest_file).to_dict("records")
+    fractions = {"train": args.train_frac, "val": args.val_frac, "test": args.test_frac}
+    try:
+        rows, summary = assign_splits(manifest, args.seed, fractions)
+    except SplitError as e:
+        raise ConfigError(str(e)) from e
+
+    admission_file = prepared_dir / "admission.json"
+    manifest_fp = ""
+    if admission_file.is_file():
+        manifest_fp = json.loads(admission_file.read_text(encoding="utf-8")).get(
+            "manifest_fingerprint", "")
+    identity = json.dumps({"manifest": manifest_fp, "seed": args.seed,
+                           "fractions": fractions}, sort_keys=True)
+    split_id = f"{_stamp()}_seed{args.seed}_{hashlib.sha256(identity.encode()).hexdigest()[:8]}"
+    out_dir = workspace_dir(paths, "splits", task_id, split_id)
+    job = {
+        "split_id": split_id, "task_id": task_id, "dataset_id": args.dataset,
+        "prepared_id": args.prepared, "manifest": str(manifest_file),
+        "manifest_fingerprint": manifest_fp, "seed": args.seed,
+        "fractions": fractions, "summary": summary, "out_dir": str(out_dir),
+        "created_at": _now_iso(), "code_version": __version__,
+    }
+    pd.DataFrame(rows, columns=["sample_id", "group_id", "label", "split"]).to_csv(
+        out_dir / "split.csv", index=False)
+    (out_dir / "split.json").write_text(
+        json.dumps(job, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+    (out_dir / "split.md").write_text(render_split(job), encoding="utf-8")
+    print(f"[split] id={split_id}")
+    print(f"[split] output dir: {out_dir}")
+    print(f"[split] samples={summary['n_samples']} subjects={summary['n_subjects']}")
+    for split in ("train", "val", "test"):
+        b = summary["by_split"][split]
+        s = summary["subjects_by_split"][split]
+        print(f"[split] {split:5s}: samples={b['n_samples']:6d} "
+              f"subjects={s['n_subjects']:3d} labels={b['labels']}")
+    return 0
+
+
 def cmd_inspect_file(args) -> int:
     paths = load_paths(args.paths)
     root = dataset_root(paths, args.dataset)
@@ -552,9 +603,17 @@ def cmd_extract_features(args) -> int:
         raise ConfigError(f"files.csv missing columns {missing}; regenerate the scan")
     df = pd.read_csv(files_csv, usecols=cols)
     all_rows = df.to_dict("records")
+    if getattr(args, "mic", None):
+        before = len(all_rows)
+        all_rows = [r for r in all_rows
+                    if str(r.get(COL_MIC_TOKEN) or "").strip() == args.mic]
+        print(f"[extract-features] mic filter {args.mic!r}: {len(all_rows)}/{before} rows")
+        if not all_rows:
+            raise ConfigError(f"--mic {args.mic!r} matched no rows in {files_csv}")
     print(f"[extract-features] source={args.source} rows={len(all_rows)}")
 
     chosen, selection = stratified_sample(all_rows, args.limit)
+    selection["mic"] = getattr(args, "mic", None)
 
     sr_inventory = Counter(
         sr for sr in (_int_or_none(r.get(COL_SAMPLE_RATE)) for r in all_rows
@@ -801,6 +860,20 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(func=cmd_dataset_report)
 
     sp = sub.add_parser(
+        "split",
+        help="deterministic person-disjoint, label-stratified train/val/test split")
+    sp.add_argument("--dataset", required=True)
+    sp.add_argument("--prepared", required=True, help="approved prepared job id")
+    sp.add_argument("--task", default=None)
+    sp.add_argument("--seed", type=int, default=0)
+    sp.add_argument("--train-frac", type=float, default=0.6)
+    sp.add_argument("--val-frac", type=float, default=0.2)
+    sp.add_argument("--test-frac", type=float, default=0.2)
+    sp.add_argument("--paths", required=True)
+    sp.add_argument("--repo-root", default=None)
+    sp.set_defaults(func=cmd_split)
+
+    sp = sub.add_parser(
         "prepare",
         help="label review + mic/origin rules -> approved, person-isolated manifest")
     sp.add_argument("--dataset", required=True)
@@ -826,6 +899,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--preprocess", required=True, help="preprocessing config yaml")
     sp.add_argument("--features", default=None,
                     help="feature config yaml (reserved for the MFCC stage)")
+    sp.add_argument("--mic", default=None,
+                    help="keep only this microphone token before sampling (e.g. M3)")
     sp.add_argument("--limit", type=int, default=None,
                     help="deterministic stratified sample size (omit for all rows)")
     sp.add_argument("--cache-mode", choices=["run", "shared"], default="run")

@@ -1,0 +1,18 @@
+{
+  "dataset_id": "uaspeech",
+  "task_id": "uaspeech_v1",
+  "scan_id": "20261109T171421+0800_uaspeech_full_dd025653",
+  "scan_meta": "/mnt/data/test1/Speech_Disease_Recognition_Dataset_Benchmark/2026_new_mission/speech_disease_benchmark_workspace20261109/artifacts/inventory/uaspeech/20261109T171421+0800_uaspeech_full_dd025653/meta.json",
+  "dataset_root": "/mnt/data/test1/Speech_Disease_Recognition_Dataset_Benchmark/fresh_datasets/UAspeech",
+  "review_file": "/mnt/data/test1/Speech_Disease_Recognition_Dataset_Benchmark/2026_new_mission/speech_disease_benchmark_workspace20261109/artifacts/label_review/uaspeech_label_review.csv",
+  "review_sha256": "6d1bb9581329c44781c3f7a3450e0b5be669044359b425b75e28505da8f28d74",
+  "selection": {
+    "mic": "M3",
+    "one_per_origin": true,
+    "variant": "original",
+    "elicitation": "unknown"
+  },
+  "generated_at": "2026-11-09T19:34:04+08:00",
+  "tool_version": "0.1.0",
+  "status": "approved"
+}
