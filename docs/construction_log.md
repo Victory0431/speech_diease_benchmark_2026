@@ -501,3 +501,100 @@ sddbench summarize --runs artifacts/runs --out results_summary --repo-root .
 - 单 seed、6 位测试说话人，排序不稳定；
 - 不支持并行/断点续跑；失败会记录但需要人工重跑；
 - 汇总表不含置信区间与多 seed 聚合（D8）。
+
+---
+
+## D8：结果层独立化（契约、归档与跨数据集榜单，2026-11-09）
+
+### 本阶段目的
+
+D6 其实已经有"结果"：`metrics.py` 算指标、`report.py` 画图、`run` 写 `metrics.json` 与结果包。
+但那时结果层是**模型层的附属**：指标口径散落在训练脚本里，没有一份"所有数据集都必须长这样"的
+契约，也没有"哪些结果可以进仓库"的边界。D8 把它抽成独立的 `results/` 层，
+回答三个问题：
+
+1. 一次运行必须报哪些数、在哪个粒度上报（契约）；
+2. 哪些文件可以离开本机、进 Git 归档（发布白名单）；
+3. 多个数据集、多次运行怎么放在一张表里比（leaderboard）。
+
+对应 `docs/construction_plan.md` §10（一次实验的完整记录，含 §10.3 统一指标、§10.4 论文与 Git 对应）
+与 §11（统一运行顺序）。与文档的一处差异：归档路径多了 `<dataset>/` 一层，
+即 `results_summary/<dataset>/<run_id>/`，避免不同库的 run_id 相同时互相覆盖。
+
+### 结果层的三个落点
+
+| 位置 | 作用 | 是否入库 |
+| --- | --- | --- |
+| `artifacts/runs/<run_id>/metrics.json` | 单次运行的全量指标（train/val/test × window/recording/subject） | ❌ 随 run 目录留在本机 |
+| `src/sddbench/results/contract.py` | 稳定契约：必需键、粒度、混淆矩阵、版本号 | ✅ 代码 |
+| `results_summary/<dataset>/<run_id>/` + 顶层 `leaderboard.csv/md` | 清洗后的发布归档与跨数据集榜单 | ✅ 小体积 |
+
+### 契约 v1.0（`results/contract.py`）
+
+- 顶层必需键：`run_id`、`task_id`、`dataset`、`class_order`（恰好两个互异类别）、
+  `evaluation_unit`（必须是 `subject`）、`positive_class`、`primary_metric`、`metrics`。
+- `metrics` 必须有 `train`/`val`/`test` 三个 split，每个 split 必须有
+  `window`/`recording`/`subject` 三个粒度，且不能为 `null`。
+- 每个指标块必需：`n`、`accuracy`、`balanced_accuracy`、`sensitivity`、`specificity`、
+  `precision`、`f1`、`auroc`、`average_precision`、`log_loss`、`brier`、
+  `confusion{tn,fp,fn,tp}`。
+- 主指标固定为 test/subject，window 与 recording 作为参考层一并保留，
+  这样"按人"和"按录音"两种口径永远同时存在，便于判断模型是不是只记住了某个人。
+- `trainer.py` 在写 `metrics.json` 前调用 `validate_metrics` 并写入 `contract_version`；
+  `publish_run` 发布前再校验一次。任何缺项都抛 `ResultsContractError`，不静默降级。
+
+### 发布白名单（`results/publish.py`）
+
+发布的文件只有：`metrics.json`、`metrics_per_class.csv`、`report.md`、`config.yaml`、
+清洗后的 `run_meta.json`、`figures/*.png`（混淆矩阵、ROC、分数分布、学习曲线）。
+
+不发布：`best.pt` 权重、`predictions_windows.csv`、`predictions_subjects.csv`、
+`inputs/` 快照、`manifest.csv`、`split.csv`、特征缓存。
+
+`run_meta.json` 由 `sanitize_run_meta` 生成：只保留可复现事实
+（dataset/task/prepared/split/seed/model/training/git/environment/feature cache 元数据、
+训练样本数与人数统计），显式剔除绝对路径、清单路径与逐人预测。
+
+`publish_all` 按 run 目录逐个发布，坏 run 记进 `failures` 但不中断归档，最后总是重建 leaderboard。
+
+### leaderboard
+
+`leaderboard.csv/md` 的列：dataset、task、experiment、run、seed、prepared/split ID、
+model/hidden/dropout/lr/batch/feature_dim/feature_key、train/val/test 人数、样本数、best epoch、
+best val subject bAcc、git commit/dirty、published_at、contract_version，
+以及 test 的 subject 与 window 两套完整指标与混淆计数。
+排序按 `subject_balanced_accuracy` 降序，同分看 `subject_auroc`。
+
+### 实跑
+
+```bash
+sddbench publish --runs artifacts/runs --out results_summary --repo-root .
+sddbench summarize --runs artifacts/runs --out results_summary --repo-root .
+```
+
+- 发布 3 个真实 UAspeech run（基线 + dropout 0.0 + dropout 0.4），0 失败；
+- 归档合计 **592 KB**（含 12 张 PNG 与 3 份 `metrics.json`），可以安全入库；
+- 旧的 `results_summary/summary.csv|md` 保留（D7 的汇总），新增 `leaderboard.*`，
+  两者分工：`summary` 看单库内的超参对比，`leaderboard` 看跨库统一口径。
+
+| dataset | run | dropout | test 人数 | bAcc | sens | spec | precision | F1 | AUROC | AP | log loss | Brier | window bAcc |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| uaspeech | `..._a522c1`（基线） | 0.2 | 6 | 0.833 | 1.000 | 0.667 | 0.750 | 0.857 | 0.889 | 0.917 | 0.438 | 0.135 | 0.699 |
+| uaspeech | `..._f884b4` | 0.0 | 6 | 0.833 | 1.000 | 0.667 | 0.750 | 0.857 | 0.889 | 0.917 | 0.439 | 0.136 | 0.698 |
+| uaspeech | `..._82e407` | 0.4 | 6 | 0.833 | 1.000 | 0.667 | 0.750 | 0.857 | 0.889 | 0.917 | 0.442 | 0.136 | 0.696 |
+
+### 测试
+
+`python -m pytest tests -q` → **62 passed**。新增 `tests/test_results.py` 4 项：
+
+1. 一份合规 `metrics.json` 通过契约；删掉 `auroc` 必须报错；
+2. `evaluation_unit != "subject"` 必须报错；
+3. `sanitize_run_meta` 必须去掉 `/abs/` 路径、`manifest.csv` 与 `predictions`；
+4. `publish_run` 只写白名单文件；`publish_all` 遇到坏 run 记录失败、不中断，且仍生成 leaderboard。
+
+### 已知限制
+
+- 目前只有 UAspeech 一库三次运行，榜单尚不具备统计意义；
+- 两次 sweep run 的 `git_dirty=true`（跑它们时结果层代码还没提交），基线 run 为 `false`；
+- 契约目前只覆盖二分类；多分类与回归任务要等出现真实需求再扩版本号；
+- 没有多 seed 与置信区间，排序仍可能被一两位说话人左右（D9）。

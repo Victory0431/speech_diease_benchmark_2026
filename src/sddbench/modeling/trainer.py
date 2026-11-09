@@ -22,6 +22,7 @@ from torch import nn
 from .. import __version__
 from ..data.windows import normalize_preprocess, preprocess_fingerprint
 from ..features.mfcc import normalize_feature_config
+from ..results.contract import CONTRACT_VERSION, validate_metrics
 from .experiment import config_hash
 from .features import load_features
 from .metrics import binary_metrics, per_class_rows
@@ -431,7 +432,9 @@ def run_experiment(cfg: dict, workspace: Path, repo_root: Path,
         "coverage": coverage,
         "warnings": warnings,
         "config_hash": job["config_hash"],
+        "contract_version": CONTRACT_VERSION,
     }
+    validate_metrics(metrics_doc)
     (out_dir / "metrics.json").write_text(
         json.dumps(metrics_doc, ensure_ascii=False, indent=2), encoding="utf-8")
     per_class = []

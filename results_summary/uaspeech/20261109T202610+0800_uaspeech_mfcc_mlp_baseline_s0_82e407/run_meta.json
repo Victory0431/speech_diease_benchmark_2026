@@ -1,0 +1,159 @@
+{
+  "contract_version": "1.0",
+  "published_at": "2026-11-09T22:13:38+08:00",
+  "run_id": "20261109T202610+0800_uaspeech_mfcc_mlp_baseline_s0_82e407",
+  "status": "completed",
+  "experiment_id": "uaspeech_mfcc_mlp_baseline",
+  "experiment_name": "UAspeech MFCC20+stats -> MLP baseline",
+  "experiment_group": "baseline_v1",
+  "purpose": "验证数据层到模型层的完整闭环，并给出第一条可追溯基线",
+  "stage": "baseline",
+  "task_id": "uaspeech_v1",
+  "dataset": "uaspeech",
+  "prepared_id": "20261109T193404+0800_uaspeech_prepare",
+  "split_id": "20261109T193524+0800_seed0_f7eb7f76",
+  "class_order": [
+    "control",
+    "disorder"
+  ],
+  "positive_class": "disorder",
+  "seed": 0,
+  "model": {
+    "name": "mlp",
+    "hidden_dims": [
+      128
+    ],
+    "dropout": 0.4,
+    "activation": "relu"
+  },
+  "training": {
+    "seed": 0,
+    "epochs": 80,
+    "batch_size": 64,
+    "optimizer": "adamw",
+    "learning_rate": 0.001,
+    "weight_decay": 0.0001,
+    "early_stopping_patience": 10,
+    "selection_metric": "subject_balanced_accuracy",
+    "class_weighting": "subject_balanced",
+    "device": "cpu"
+  },
+  "best_epoch": 6,
+  "best_val_subject_balanced_accuracy": 1.0,
+  "started_at": "2026-11-09T20:23:54+08:00",
+  "finished_at": "2026-11-09T20:26:10+08:00",
+  "elapsed_sec": 136.0,
+  "code_version": "0.1.0",
+  "git": {
+    "commit": "a939e8cb57611722944025540199f9e7331ee887",
+    "dirty": true
+  },
+  "config_hash": "82e4078976439b308bfbe809da294ff259fad82f849d00b22b380a4b6721353a",
+  "environment": {
+    "python": "3.13.11",
+    "torch": "2.9.0+cpu",
+    "numpy": "2.5.4",
+    "platform": "Linux-5.15.0-198-generic-x86_64-with-glibc2.35"
+  },
+  "data": {
+    "n_samples": 21126,
+    "n_subjects": 28,
+    "feature_dim": 40,
+    "sample_rate": 16000,
+    "subject_counts": {
+      "train": 17,
+      "val": 5,
+      "test": 6
+    },
+    "label_counts": {
+      "train": {
+        "control": 6591,
+        "disorder": 6120
+      },
+      "val": {
+        "control": 2295,
+        "disorder": 1530
+      },
+      "test": {
+        "control": 2295,
+        "disorder": 2295
+      }
+    },
+    "split_summary": {
+      "seed": 0,
+      "fractions": {
+        "train": 0.6,
+        "val": 0.2,
+        "test": 0.2
+      },
+      "n_samples": 21126,
+      "n_subjects": 28,
+      "allocation_by_label": {
+        "control": {
+          "train": 9,
+          "val": 3,
+          "test": 3
+        },
+        "disorder": {
+          "train": 8,
+          "val": 2,
+          "test": 3
+        }
+      },
+      "by_split": {
+        "train": {
+          "n_samples": 12711,
+          "labels": {
+            "control": 6591,
+            "disorder": 6120
+          }
+        },
+        "val": {
+          "n_samples": 3825,
+          "labels": {
+            "control": 2295,
+            "disorder": 1530
+          }
+        },
+        "test": {
+          "n_samples": 4590,
+          "labels": {
+            "control": 2295,
+            "disorder": 2295
+          }
+        }
+      },
+      "subjects_by_split": {
+        "train": {
+          "n_subjects": 17,
+          "labels": {
+            "control": 9,
+            "disorder": 8
+          }
+        },
+        "val": {
+          "n_subjects": 5,
+          "labels": {
+            "control": 3,
+            "disorder": 2
+          }
+        },
+        "test": {
+          "n_subjects": 6,
+          "labels": {
+            "control": 3,
+            "disorder": 3
+          }
+        }
+      }
+    },
+    "feature_cache": {
+      "feature_key": "mfcc_stats_7821f53b7b6c12bd",
+      "feature_hash": "7821f53b7b6c12bd499dea4d88dbca8931180df7fa0595fda4a4c10cbfbad549",
+      "view_fingerprint": "4ef5732ff2bc51de7728db0845f4708d348c415575f769287daf8adea4fd4af2",
+      "sample_rate": 16000,
+      "dim": 40,
+      "n_samples": 21126
+    }
+  }
+}

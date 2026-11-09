@@ -91,6 +91,8 @@ from .modeling.experiment import (
 from .modeling.features import FeatureLoadError
 from .modeling.trainer import RunError, load_run_data, run_experiment
 from .modeling.sweep import SweepError, load_sweep, run_sweep, summarize_runs
+from .results.contract import ResultsContractError
+from .results.publish import publish_all
 from .features.cache import FeatureCacheManager
 from .features.mfcc import (
     FeatureConfigError,
@@ -498,6 +500,33 @@ def cmd_summarize(args) -> int:
         print(f"[summarize] top: {top['run_id']} "
               f"test_subject_bacc={top['test_subject_balanced_accuracy']}")
     return 0
+
+
+def cmd_publish(args) -> int:
+    """D8: archive small result digests and rebuild the cross-dataset leaderboard."""
+    repo_root = Path(args.repo_root).resolve() if args.repo_root else Path.cwd()
+    if args.runs:
+        runs_root = Path(args.runs).expanduser().resolve()
+    elif args.paths:
+        paths = load_paths(args.paths)
+        runs_root = Path(paths["workspace_root"]) / "runs"
+    else:
+        raise ConfigError("publish needs --runs or --paths")
+    if not runs_root.is_dir():
+        raise ConfigError(f"runs directory not found: {runs_root}")
+    out_dir = (Path(args.out).expanduser().resolve() if args.out
+               else repo_root / "results_summary")
+    try:
+        published, failures = publish_all(runs_root, out_dir)
+    except ResultsContractError as e:
+        raise ConfigError(str(e)) from e
+    print(f"[publish] published={len(published)} failed={len(failures)} -> {out_dir}")
+    for item in published:
+        print(f"[publish]   {item['run_id']}")
+    for item in failures:
+        print(f"[publish]   FAILED {item['run_dir']}: {item['error']}")
+    print(f"[publish] leaderboard: {out_dir / 'leaderboard.csv'} / leaderboard.md")
+    return 0 if not failures else 1
 
 
 def cmd_inspect_file(args) -> int:
@@ -1007,6 +1036,15 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--paths", required=True)
     sp.add_argument("--repo-root", default=None)
     sp.set_defaults(func=cmd_sweep)
+
+    sp = sub.add_parser(
+        "publish",
+        help="archive small result digests and rebuild the cross-dataset leaderboard")
+    sp.add_argument("--runs", default=None, help="runs directory (default: <workspace>/runs)")
+    sp.add_argument("--out", default=None, help="output directory (default: ./results_summary)")
+    sp.add_argument("--paths", default=None, help="required only when --runs is omitted")
+    sp.add_argument("--repo-root", default=None)
+    sp.set_defaults(func=cmd_publish)
 
     sp = sub.add_parser(
         "summarize",

@@ -270,3 +270,35 @@
   2. 用 `--set model.dropout=0.1 --max-runs 1` 再跑一次，确认新 run 目录与 jobs 记录；
   3. 删除一个 run 目录后重跑 `summarize`，确认汇总减少一行且不报错。
 - 结论：待人工验收
+
+## D8（结果层：契约、归档与跨数据集榜单）——待验收
+
+- 日期：2026-11-09
+- 施工内容：`src/sddbench/results/{contract,publish}.py`、`cli.py` 的 `publish` 子命令、
+  `trainer.py` 写指标前接入契约校验、`results_summary/<dataset>/<run_id>/` 归档、
+  `leaderboard.csv/md`、`tests/test_results.py`。
+- 契约 v1.0：train/val/test × window/recording/subject 三层都要有
+  `n/accuracy/balanced_accuracy/sensitivity/specificity/precision/f1/auroc/average_precision/log_loss/brier/confusion{tn,fp,fn,tp}`；
+  `evaluation_unit` 必须为 `subject`，否则拒绝。
+- 实际执行：
+  - `publish --runs artifacts/runs --out results_summary --repo-root .` → 3 个 run 全部发布，0 失败；
+  - `summarize` 重跑 → 3 行；
+  - `python -m pytest tests -q` → 62 passed。
+- 证据路径：
+  - `results_summary/uaspeech/<run_id>/{metrics.json,metrics_per_class.csv,report.md,config.yaml,run_meta.json,figures/*.png}`；
+  - `results_summary/leaderboard.csv`、`results_summary/leaderboard.md`、`results_summary/summary.csv|md`。
+- 通过项（自检）：
+  - 归档总体积 592 KB，只含聚合指标、报告、配置与 4 类小图；
+  - `run_meta.json` 不含绝对路径、`manifest.csv`、`split.csv` 与逐人预测；
+  - 权重 `best.pt`、`predictions_*.csv`、`inputs/` 均未进入仓库；
+  - 缺任一必需指标或粒度不为 subject 时，发布与训练都会显式报错；
+  - 坏 run 不会阻断其余 run 的归档，且失败原因可查；
+  - leaderboard 同时给出 subject 与 window 两套口径与混淆计数。
+- 已知限制：单数据集三次运行；两次 sweep run 记录 `git_dirty=true`；
+  尚无多 seed 置信区间，排序仅供浏览。
+- 验收步骤建议：
+  1. 打开 `results_summary/leaderboard.md`，与 `artifacts/runs/<run_id>/metrics.json` 的
+     `metrics.test.subject` 逐项对照；
+  2. 临时删掉某归档 run 下 `metrics.json` 的 `auroc` 再跑 `publish`，确认失败被记录且其余 run 仍发布；
+  3. 确认 `git status` 中没有任何 `*.pt`、`predictions_*.csv` 或 `manifest.csv`。
+- 结论：待人工验收
