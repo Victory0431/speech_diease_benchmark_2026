@@ -136,9 +136,33 @@ tests/                    合成数据测试，不碰真实患者音频
 | 准入门槛 | `reporting/admission_report.py` | `prepared/.../admission.md` |
 | 划分报告 | `reporting/split_report.py` | `splits/.../split.md` |
 
+### 4.7 网页控制台（D12）
+
+| 模块 | 代码文件 | 职责 |
+| --- | --- | --- |
+| 参数注册表 | `web/schema.py` | 所有可调参数的键、类型、默认值、范围、影响范围（窗口/特征/划分/训练）；生成 YAML 前统一校验 |
+| 目录服务 | `web/catalog.py` | 只读汇总 `configs/datasets`、inventory、prepared、splits、runs、`results_summary` |
+| HTTP 服务 | `web/server.py` | 标准库 `http.server`；GET schema/catalog/jobs、POST experiment/run/split、图床代理 |
+| 前端 | `web/static/index.html`、`style.css`、`app.js` | 原生 HTML/CSS/JS，无构建步骤；左右布局 + 五个页签 + 日志浮层 |
+
+接口：
+
+| 方法 | 路径 | 作用 |
+| --- | --- | --- |
+| GET | `/api/schema` | 参数 schema |
+| GET | `/api/catalog` | 数据集、prepared、split、run、榜单、聚合 |
+| POST | `/api/experiment` | 校验参数并写 `configs/experiments/generated/<id>/` |
+| POST | `/api/run` | 同上，再以子进程启动 `sddbench run`（可 `dry_run`） |
+| POST | `/api/split` | 同步调用 `sddbench split`，返回新 `split_id` |
+| GET | `/api/jobs/<id>` | 任务状态与日志尾部 |
+| GET | `/media/run/<run_id>/<png>` | 只允许 run 目录 `figures/*.png` |
+
+**写边界**：网页只写 `artifacts/web/` 与 `configs/experiments/generated/`；
+不覆盖手工基线、不删除 run、不扫描原始数据根。默认只监听 `127.0.0.1`，无鉴权。
+
 ## 5. 参数地图
 
-平台有四层配置，网页控制台会把它们分组展示。
+平台有四层配置，网页控制台会把它们分组展示（表单由 `web/schema.py` 的同一份注册表生成）。
 
 ### 5.1 数据任务 `configs/datasets/<dataset>_v1.yaml`
 

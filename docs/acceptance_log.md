@@ -369,3 +369,42 @@
   2. 跑 `pytest tests/test_admission.py -q` 与 `tests/test_modeling.py -q`；
   3. 打开 `results_summary/leaderboard.md`，确认 `primary_unit` 列全部为 `subject`。
 - 结论：待人工验收
+
+## D12（网页控制台）——待验收
+
+- 日期：2026-11-10
+- 施工内容：新增 `web/schema.py`（参数注册表）、`web/catalog.py`（只读目录）、
+  `web/server.py`（标准库 HTTP + 子进程任务）、`web/static/`（五个页签的控制台）；
+  CLI 增加 `describe` / `catalog` / `serve`。
+- 实际执行：
+  - `python -m pytest tests -q` → **71 passed**；
+  - `sddbench describe` → 输出 6 组参数 schema；
+  - `sddbench catalog --paths configs/paths.local.yaml` → uaspeech 2 个 approved prepared、
+    4 个划分、10 个 run；KCL 1 个 prepared、0 个划分、0 个 run；
+  - 启动 `serve` 后 `GET /api/health`、`/api/schema`、`/api/catalog`、`/` 均 200；
+  - `POST /api/experiment`：`n_mfcc=13` → `feature_dim=26`，三个 YAML 落盘；
+  - `POST /api/run`（dry_run）：子进程成功退出，日志显示数据/缓存/划分校验通过；
+  - `node --check src/sddbench/web/static/app.js` → 语法通过。
+- 证据路径：
+  - `src/sddbench/web/{schema.py,catalog.py,server.py,static/*}`；
+  - `tests/test_web.py`（4 项：schema、配置生成、目录、HTTP）；
+  - `configs/experiments/generated/` 下的网页生成配置；
+  - `artifacts/web/jobs/<job_id>.log|json`（任务日志与状态）。
+- 通过项（自检）：
+  - 表单参数键与 `build_configs`/YAML 键一一对应，未知键被拒绝；
+  - 观察长度与窗口长度不一致、`n_mfcc > n_mels`、比例和不为 1 都会 400；
+  - `grouping=file` 时强制 `evaluation.unit=recording`；
+  - 网页只写 `configs/experiments/generated/` 与 `artifacts/web/`，不改手工基线；
+  - 特征配方 `name` 不被网页改名，只改模型参数时不会误触发特征重算；
+  - 图床只允许 `figures/*.png` 且 run_id 走白名单。
+- 已知限制：未做真实浏览器截图验证（环境缺 Playwright Chromium）；
+  数据/特征参数改动不会自动重跑 `extract-features`；服务重启后运行中任务不会重连；
+  无鉴权，只应绑定 `127.0.0.1`。
+- 验收步骤建议：
+  1. `sddbench serve --paths configs/paths.local.yaml --port 8765`，浏览器打开；
+  2. 左侧选 `uaspeech`，确认总览卡片显示 2 个 prepared、4 个划分、10 个 run；
+  3. 切到“数据与特征”，把 `n_mfcc` 改成 13，确认维度提示变成 26；
+  4. 切到“划分”，用 seed 5 生成新划分，确认列表刷新且新 split 被选中；
+  5. 回“模型与训练”，点“试运行”，确认日志浮层出现并以 completed 结束；
+  6. 切到“结果”，确认榜单、聚合表与图与 `results_summary` 一致。
+- 结论：待人工验收

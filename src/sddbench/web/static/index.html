@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>语音疾病识别基准 · 控制台</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">SD</div>
+      <div>
+        <div class="brand-title">语音疾病识别</div>
+        <div class="brand-sub">Benchmark Console</div>
+      </div>
+    </div>
+
+    <div class="side-label">数据集</div>
+    <ul id="dataset-list" class="dataset-list"></ul>
+
+    <div class="side-label">当前绑定</div>
+    <div class="bind-box">
+      <label>prepared 作业
+        <select id="prepared-select"></select>
+      </label>
+      <label>数据划分
+        <select id="split-select"></select>
+      </label>
+    </div>
+
+    <div class="side-foot">
+      <div>本地只读目录</div>
+      <code id="workspace-path">…</code>
+      <div class="hint">仅绑定 127.0.0.1，无鉴权，请勿暴露公网。</div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <div>
+        <h1 id="dataset-title">加载中…</h1>
+        <div id="dataset-badges" class="badges"></div>
+      </div>
+      <div class="topbar-actions">
+        <label class="exp-id">实验 ID
+          <input id="experiment-id" placeholder="留空则自动生成">
+        </label>
+        <button class="btn ghost" id="refresh-btn">刷新</button>
+        <button class="btn" id="save-btn">保存配置</button>
+        <button class="btn" id="dry-btn">试运行</button>
+        <button class="btn primary" id="train-btn">启动训练</button>
+      </div>
+    </header>
+
+    <nav class="tabs" id="tabs">
+      <button data-tab="overview" class="active">总览</button>
+      <button data-tab="data">数据与特征</button>
+      <button data-tab="split">划分</button>
+      <button data-tab="model">模型与训练</button>
+      <button data-tab="results">结果</button>
+    </nav>
+
+    <section id="panel" class="panel"></section>
+  </main>
+</div>
+
+<div id="logbar" class="logbar hidden">
+  <div class="logbar-head">
+    <span id="log-title">任务日志</span>
+    <span id="log-status" class="pill">idle</span>
+    <button class="icon-btn" id="log-close">×</button>
+  </div>
+  <pre id="log-body"></pre>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

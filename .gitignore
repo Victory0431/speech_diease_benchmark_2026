@@ -8,6 +8,9 @@
 # ---- 本机路径绑定（含绝对路径，绝不入库）----
 configs/paths.local.yaml
 
+# ---- D12 网页控制台生成物（实验配置、任务日志都在本机）----
+configs/experiments/generated/
+
 # ---- 原始音频 / 数据集文件（任何位置出现都不提交）----
 *.wav
 *.wave

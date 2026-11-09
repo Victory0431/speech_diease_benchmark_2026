@@ -62,10 +62,10 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 命令 | `inspect-file`（单文件核查）、`stats`（quick/full 统计，可断点续扫）、`dataset-report`（重建报告）、`extract-features`（窗口索引 + MFCC 统计 + 分片缓存）、`prepare`（标签复核 + 人员隔离清单，未确认则阻断）、`split`（按 group 隔离的分层划分）、`run`（冻结特征 MLP 训练 + 结果包）、`sweep`（参数网格）、`summarize`（同库内跨运行汇总）、`publish`（按结果契约归档 + 跨数据集榜单）、`aggregate`（多 seed 均值/区间） |
+| 命令 | `inspect-file`（单文件核查）、`stats`（quick/full 统计，可断点续扫）、`dataset-report`（重建报告）、`extract-features`（窗口索引 + MFCC 统计 + 分片缓存）、`prepare`（标签复核 + 人员隔离清单，未确认则阻断）、`split`（按 group 隔离的分层划分）、`run`（冻结特征 MLP 训练 + 结果包）、`sweep`（参数网格）、`summarize`（同库内跨运行汇总）、`publish`（按结果契约归档 + 跨数据集榜单）、`aggregate`（多 seed 均值/区间）、`describe`（参数 schema）、`catalog`（数据集/run 目录）、`serve`（网页控制台） |
 | 数据层模块 | `scan`（枚举分类）、`decoders`（probe+解码，soundfile 优先、ffprobe 兜底）、`audit`（并行审计+质量摘要）、`stats`（聚合）、`adapters/uaspeech` + `adapters/parkinson_kcl`（命名与归属解释）、`audio`（通道/裁剪/重采样）、`windows`（位置规则+`view_hash`）、`prepare`（确定性分层抽样）、`admission`（复核/隔离/批准清单）、`split`（人员隔离分层划分）、`features/mfcc`（固定配方）、`features/cache`（分片/续算/复用）、`modeling/*`（特征读取、指标、MLP、实验配置、训练、报告、扫描/汇总）、`results/*`（结果契约、发布白名单、跨数据集 leaderboard、多 seed 聚合） |
 | 产物 | `files.csv`、`statistics.json`、`meta.json`、`issues.csv`、`length_candidates*.csv`、`report.md`、`figures/*.png`；D2/D3 追加 `windows.csv`、`job.json`、`inspection.md`、可审听预览、`cache/features/mfcc_stats/<feature_key>/`（`meta.json` + `index.csv` + `shard_*.npz`）；D4 追加 `label_review_status.csv`、`admission.json`、`admission.md`、通过时才有 `manifest.csv`；D5 追加 `split.csv`、`split.json`、`split.md`；D6 追加 `runs/<run_id>/`（`run.json`、`metrics.json`、`predictions_*`、`best.pt`、`report.md`、`figures/`）；D8 追加 `results_summary/<dataset>/<run_id>/`（契约指标、逐类指标、报告、配置、清洗后的 `run_meta.json`、`figures/*.png`）与顶层 `leaderboard.csv/md` |
-| 测试 | 67 项合成数据测试全绿（不含任何真实患者音频） |
+| 测试 | 71 项合成数据测试全绿（不含任何真实患者音频） |
 | 设计约束 | 适配器不碰解码；统计只报事实不自动选参数；标签未核验前不产出分类清单 |
 
 ### UAspeech 全库统计结果（full 模式，逐条解码）
@@ -202,6 +202,12 @@ sddbench publish --runs artifacts/runs --out results_summary --repo-root .
 # D9：多 seed 汇总（只读本地 run 包，含 test 分组 bootstrap 与箱线图）
 sddbench aggregate --runs artifacts/runs --out results_summary --repo-root .
 
+# D12：本地网页控制台（浏览数据集、调数据/特征/划分/模型参数、启动训练）
+sddbench describe                 # 打印参数 schema（JSON）
+sddbench catalog --paths configs/paths.local.yaml   # 打印数据集/run 目录
+sddbench serve --paths configs/paths.local.yaml --port 8765
+# 浏览器打开 http://127.0.0.1:8765
+
 # 第二个数据集：统计 + 4 s 技术验证
 sddbench stats --dataset parkinson_kcl --mode full --paths configs/paths.local.yaml
 sddbench extract-features --dataset parkinson_kcl --source <KCL_SCAN_ID> \
@@ -235,7 +241,8 @@ sddbench extract-features --dataset parkinson_kcl --source <KCL_SCAN_ID> \
 │   │   └── adapters/          # 数据集适配器（只解释命名/归属，不碰音频）
 │   ├── features/              # MFCC 固定配方 + 分片缓存
 │   ├── modeling/              # 特征读取、指标、MLP、实验配置、训练、扫描/汇总、报告
-│   ├── results/               # 结果契约、发布白名单、跨数据集 leaderboard
+│   ├── results/               # 结果契约、发布白名单、跨数据集 leaderboard、多 seed 聚合
+│   ├── web/                   # D12 网页控制台：schema.py、catalog.py、server.py、static/
 │   └── reporting/             # markdown 报告 + 图 + 作业预检
 ├── configs/
 │   ├── paths.example.yaml     # 路径模板（真实 paths.local.yaml 不入库）
@@ -293,7 +300,32 @@ sddbench extract-features --dataset parkinson_kcl --source <KCL_SCAN_ID> \
 
 ---
 
-## 五、当前边界（重要）
+## 五、网页控制台（D12）
+
+```bash
+sddbench serve --paths configs/paths.local.yaml --port 8765
+# 浏览器打开 http://127.0.0.1:8765
+```
+
+页面按流水线组织，参数不再藏在代码里：
+
+| 页 | 能看到/能改什么 |
+| --- | --- |
+| 总览 | 适配器、`grouping`、主单位、说话人数、样本数、扫描/准入/划分/run 状态；每步缺什么、下一句命令是什么 |
+| 数据与特征 | 采样率、通道、观察窗、截取位置、补零；`n_mfcc`、`n_mels`、帧长/帧移、频率范围；改哪项需要重算窗口或特征 |
+| 划分 | 划分 seed、train/val/test 比例；已有划分的人数与样本分布；可直接生成新划分 |
+| 模型与训练 | 隐藏层、dropout、seed、epochs、batch size、学习率、早停、评价单位 |
+| 结果 | 跨数据集榜单、多 seed 均值/区间、换划分敏感性、单次 run 的混淆矩阵/ROC/分数分布/学习曲线 |
+
+- “保存配置”只写 `configs/experiments/generated/<实验ID>/`，**不覆盖**手工基线；
+- “试运行”走现有 `run --dry-run`，校验数据、缓存和划分；
+- “启动训练”通过子进程调用现有 `sddbench run`，日志实时回传，完成后自动刷新结果；
+- 后端只读 `artifacts/`，不扫描原始数据根；服务默认只绑定 `127.0.0.1`，无鉴权，不要暴露公网；
+- 修改特征/窗口参数后，页面会提示必须重新执行 `extract-features`，否则训练会明确报“缓存不存在”。
+
+---
+
+## 六、当前边界（重要）
 
 - **已实现**：`inspect-file`、`stats`（quick/full）、`dataset-report`、
   `extract-features`（窗口索引 + MFCC 统计 + 缓存，支持 `--mic`）、
@@ -316,10 +348,10 @@ sddbench extract-features --dataset parkinson_kcl --source <KCL_SCAN_ID> \
   契约 v1.1 用 `primary_unit` 标记主评价单位，榜单不跨单位直接比较。
 - **不做的事**：不自动选观察长度、不自动选采样率、不自动选麦克风、不把目录名当标签、
   不删除任何"疑似异常"样本。这些都需要人工依据 `report.md` 的决策点拍板。
-- **状态**：阶段0、D1–D10 均"待人工验收"（见 `docs/acceptance_log.md`）。
+- **状态**：阶段0、D1–D12 均"待人工验收"（见 `docs/acceptance_log.md`）。
   施工细节与命令证据见 `docs/construction_log.md`。
 
-## 六、下一步
+## 七、下一步
 
 1. 人工验收 D1–D10：对照 `artifacts/inventory/<dataset>/<scan_id>/report.md`、
    `artifacts/feature_jobs/<job_id>/inspection.md`、
@@ -335,9 +367,10 @@ sddbench extract-features --dataset parkinson_kcl --source <KCL_SCAN_ID> \
 4. 接入更多数据集（D11）：每个库只需适配器 + 标签复核 + prepared/split ID，
    再复制一份实验配置；KCL 的标签复核与 ID22 命名问题在接入时综合处理。
    每个新库都要判断 `grouping`，并至少跑一次多 seed 汇总。
-5. 网页控制台（D12）：`sddbench serve` 后用浏览器选数据集、看配置、调数据层/模型层参数、
-   试运行、启动训练、看日志与图表；结果看板并入 D13。
-6. 长期扩展（D14）：批量实验、实验登记、回归烟测、新特征/新模型插槽。
+5. 网页控制台（D12，已完成）：`sddbench serve` 后在浏览器选数据集、看配置、
+   调数据层/特征/划分/模型参数、生成划分、试运行、启动训练、看日志与图表。
+   参数 schema 与 `--set` 共用，生成配置只写入 `configs/experiments/generated/`。
+6. 结果看板打磨（D13）与长期扩展（D14）：批量实验、实验登记、回归烟测、新特征/新模型插槽。
 
 > 完整路线与验收口径见 [docs/roadmap.md](docs/roadmap.md)；
 > 模块与参数说明见 [docs/architecture.md](docs/architecture.md)。

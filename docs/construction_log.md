@@ -745,3 +745,81 @@ D4/D5/D6 把"按说话人隔离"写死在三处：准入要求 `confirmed_subjec
 - `grouping=file` 的结论不能和 `grouping=subject` 的库直接排名，
   榜单只保证口径可见、可追溯；
 - 真实的无 speaker 数据集尚未接入，等 D11 接库时验证。
+
+---
+
+## D12：网页控制台（2026-11-10）
+
+### 问题
+
+D1–D10 的参数散落在 `configs/datasets`、`configs/preprocessing`、`configs/features`、
+`configs/experiments` 和 CLI 参数里。能用，但无法一眼回答：
+
+1. 这个数据集现在走到哪一步、缺什么？
+2. 有哪些参数可调、改了之后要重算哪一层？
+3. 能不能不动 YAML，直接在浏览器里调参、跑一次、看结果？
+
+因此 D12 的目标不是"静态汇总页"，而是**可视化调参与执行控制台**。
+
+### 设计
+
+- **一套 schema 两处用**：`web/schema.py` 定义字段键、类型、范围、默认值、影响范围；
+  浏览器表单、服务端校验、生成的 YAML 都来自同一份定义，避免"网页能填但 CLI 不认"。
+- **只读目录**：`web/catalog.py` 只读 `configs/datasets/*.yaml` 与 `artifacts/` 的
+  `inventory/prepared/splits/runs`，不扫描原始数据根，也不猜测状态。
+- **写边界**：网页只写 `configs/experiments/generated/<实验ID>/`（preprocess/features/experiment
+  三个 YAML）与 `artifacts/web/jobs/`；不覆盖手工基线、不删 run。
+- **不复制训练逻辑**：启动训练 = 子进程调用现有 `sddbench run`；试运行 = `run --dry-run`；
+  生成划分 = 同步调用 `sddbench split` 并解析 `split_id`。
+- **零新依赖**：后端 `http.server`，前端原生 HTML/CSS/JS，无构建步骤、无 CDN。
+- **安全默认**：只绑定 `127.0.0.1`，无鉴权；请求体上限 2 MB；run_id/图片名走白名单正则。
+
+页面结构：左侧数据集列表 + prepared/split 绑定；右侧五个页签
+（总览 / 数据与特征 / 划分 / 模型与训练 / 结果）；右下角任务日志浮层。
+
+### 代码改动
+
+- 新增 `src/sddbench/web/__init__.py`；
+- 新增 `src/sddbench/web/schema.py`：
+  - 6 组共 40 个参数（窗口 11、特征 8、划分 4、模型 3、训练 9、评价 1）；
+  - `validate_values` 做类型、范围、比例、`resample`/`f_max` 依赖校验；
+  - `build_configs` 生成实验/预处理/特征三个 YAML，`write_configs` 落盘；
+  - **保留基础配方的 `name`**：缓存路径是"配方名 + 配置哈希"，
+    只改模型参数时不能因为改名而强制重算特征；
+- 新增 `src/sddbench/web/catalog.py`：数据集、扫描、prepared、split、run、榜单、聚合；
+  `n_groups` 在旧 admission 缺字段时按 `n_subjects`（subject）/`n_manifest`（file）补齐；
+- 新增 `src/sddbench/web/server.py`：
+  - `GET /api/schema`、`/api/catalog`、`/api/health`、`/api/jobs[/id]`、`/media/run/...`；
+  - `POST /api/experiment`、`/api/run`、`/api/split`；
+  - `JobManager` 子进程 + 日志落盘 + 状态轮询；`python -u` 保证日志实时；
+- 新增 `src/sddbench/web/static/{index.html,style.css,app.js}`；
+- `src/sddbench/cli.py`：新增 `describe`、`catalog`、`serve` 三个子命令；
+- `pyproject.toml`：`package-data` 包含 `web/static/*`；
+- 新增 `tests/test_web.py`：schema 校验、配置生成、目录汇总、HTTP 全链路。
+
+### 实际执行
+
+```bash
+python -m pytest tests -q          # 71 passed
+sddbench describe                  # 打印参数 schema
+sddbench catalog --paths configs/paths.local.yaml
+sddbench serve --paths configs/paths.local.yaml --port 8765
+```
+
+- 真实 `/api/catalog`：uaspeech 2 个 approved prepared、4 个划分、10 个 run；
+  KCL 1 个 prepared、0 个划分、0 个 run；
+- 通过 `/api/experiment` 生成 `web_smoke`（n_mfcc=13 → 26 维）与
+  `web_dryrun`（默认参数）两次配置，校验与落盘正常；
+- 通过 `/api/run` 启动 `web_dryrun` 的 `--dry-run`，子进程成功退出，
+  日志显示数据、缓存、划分均通过；21k 窗口在 CPU 上约 2 分钟（需注意页面不是秒回）。
+
+### 边界
+
+- 本次没有真实浏览器截图验证（环境未安装 Playwright Chromium）；
+  已用 `node --check app.js`、HTTP 接口测试和真实数据目录做了替代验证；
+- 特征/窗口参数变化后，网页只提示需要重跑 `extract-features`，**不会自动重算**
+  （特征作业可能很长，必须显式执行）；
+- 任务状态保存在进程内 + `artifacts/web/jobs/*.json`，服务器重启后运行中的任务
+  不会自动重连；
+- 无鉴权，只适合本机或受信内网；不做多用户隔离。
+
