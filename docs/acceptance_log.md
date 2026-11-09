@@ -58,4 +58,38 @@
   3. 核对 report.md 第 8 节人工决策点；
   4. 未发生对原始数据的写入（数据根只读）。
 - 结论：待人工验收
-- 代码提交号：未提交（验收后执行 `feat: add audited dataset statistics pipeline`）
+- 代码提交号：已推送（commit `0a2a843`，见 `git log`）
+
+## D2（观察窗口索引：通道/裁剪/重采样/补零）——待验收
+
+- 日期：2026-11-09
+- 施工内容：`data/audio.py`、`data/windows.py`、`data/prepare.py`、
+  `reporting/job_report.py`、`extract-features` CLI、两份预处理配置、
+  `tests/test_crop_padding.py`。
+- 实际执行：
+  - 12 条 native/head/2 s 预检：
+    `sddbench extract-features --dataset uaspeech --source 20261109T171421+0800_uaspeech_full_dd025653
+    --preprocess configs/preprocessing/uaspeech_native_smoke.yaml --limit 12 --previews 6 --dry-run
+    --paths configs/paths.local.yaml`
+    → 12 条窗口（Disorder 6 + Healthy 6，12 个不同说话人），状态 `planned`；
+  - 4 条 16 kHz 候选：
+    `--preprocess configs/preprocessing/speech_common16k_candidate.yaml --limit 4 --previews 2`
+    → 源均 16 kHz，`resample_applied=false`，4 s 目标 64,000 点，补零数已记录；
+  - `python -m pytest tests -q` → 32 passed。
+- 证据路径：`artifacts/feature_jobs/<job_id>/`
+  （job.json、config.yaml、windows.csv、issues.csv、inspection.md、previews/）。
+  两个实跑 job：`20261109T181848+0800_uaspeech_views_head_2s_ecc135d0`、
+  `20261109T181900+0800_uaspeech_views_head_4s_da65659f`。
+- 通过项（自检）：
+  - 20 s→10 s 的 head/center/tail 起点为 0/5/10 s；3 s→10 s 有效 3 s、补零 7 s（单元测试）；
+  - `fixed_random` 由 SHA256(版本|seed|sample_id) 决定，重复构建 `view_hash` 一致；
+  - 原生处理前后源文件 SHA256 不变；`files.csv` 哈希不符时拒绝该条；
+  - native 混合采样率会以 `blocked_mixed_sample_rate` 停止（退出码 3）。
+- 已知限制：`--features` 尚未实现（D3）；2 s 仅为技术验证长度，不是主协议。
+- 验收步骤建议：
+  1. 打开 `inspection.md`，核对窗口起点/有效长度/补零比例与 `windows.csv`；
+  2. 试听 `previews/*.wav`，确认是原始语音片段且未做音量归一化；
+  3. 用 `--preprocess speech_common16k_candidate.yaml` 复跑，核对 4 s/16 kHz；
+  4. 确认原始数据目录未被写入。
+- 结论：待人工验收
+- 代码提交号：见 `git log --grep "D2"`

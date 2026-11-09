@@ -3,8 +3,9 @@
 语音疾病（构音障碍）识别基准平台。目标：在同一套数据流水线、同一套评测协议下，
 比较不同模型在"从语音判断说话人是否患病"这件事上的表现，并能公平地扩展到多个数据集。
 
-> 本仓库当前只完成了**数据层的第一阶段（阶段0 + D1）**：把数据集摸清楚、量清楚、留证据。
-> 训练、划分、MFCC 特征、模型对比等尚未开始，相关命令会明确拒绝执行而不是假装成功。
+> 本仓库当前完成了**数据层的第一阶段（阶段0 + D1 + D2）**：把数据集摸清楚、量清楚、留证据，
+> 并把"看哪一段声音"固化成可复现的窗口索引。
+> 训练、划分、MFCC 特征计算、模型对比尚未开始，相关命令会明确拒绝执行而不是假装成功。
 
 ---
 
@@ -40,10 +41,10 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 命令 | `inspect-file`（单文件核查）、`stats`（quick/full 统计，可断点续扫）、`dataset-report`（重建报告） |
-| 数据层模块 | `scan`（枚举分类）、`decoders`（probe+解码，soundfile 优先、ffprobe 兜底）、`audit`（并行审计+质量摘要）、`stats`（聚合）、`adapters/uaspeech`（命名与归属解释） |
-| 产物 | `files.csv`、`statistics.json`、`meta.json`、`issues.csv`、`length_candidates*.csv`、`report.md`、`figures/*.png` |
-| 测试 | 22 项合成音频测试全绿（不含任何真实患者音频） |
+| 命令 | `inspect-file`（单文件核查）、`stats`（quick/full 统计，可断点续扫）、`dataset-report`（重建报告）、`extract-features`（D2：窗口索引预检；MFCC 在 D3） |
+| 数据层模块 | `scan`（枚举分类）、`decoders`（probe+解码，soundfile 优先、ffprobe 兜底）、`audit`（并行审计+质量摘要）、`stats`（聚合）、`adapters/uaspeech`（命名与归属解释）、`audio`（通道/裁剪/重采样）、`windows`（位置规则+`view_hash`）、`prepare`（确定性分层抽样） |
+| 产物 | `files.csv`、`statistics.json`、`meta.json`、`issues.csv`、`length_candidates*.csv`、`report.md`、`figures/*.png`；D2 追加 `windows.csv`、`job.json`、`inspection.md`、可审听预览 |
+| 测试 | 32 项合成音频测试全绿（不含任何真实患者音频） |
 | 设计约束 | 适配器不碰解码；统计只报事实不自动选参数；标签未核验前不产出分类清单 |
 
 ### UAspeech 全库统计结果（full 模式，逐条解码）
@@ -95,6 +96,11 @@ sddbench stats --dataset uaspeech --mode full --paths configs/paths.local.yaml -
 
 # 从已保存结果重建报告与图（不再解码）
 sddbench dataset-report --dataset uaspeech --scan <SCAN_ID> --paths configs/paths.local.yaml
+
+# D2：用已保存的 full 扫描生成窗口索引与预检报告（limit 为确定性分层抽样）
+sddbench extract-features --dataset uaspeech --source <SCAN_ID> \
+    --preprocess configs/preprocessing/uaspeech_native_smoke.yaml \
+    --limit 12 --previews 6 --dry-run --paths configs/paths.local.yaml
 ```
 
 结果写入 `<workspace_root>/inventory/uaspeech/<scan_id>/`。
@@ -114,11 +120,15 @@ sddbench dataset-report --dataset uaspeech --scan <SCAN_ID> --paths configs/path
 │   │   ├── decoders.py        # probe / decode（soundfile → ffprobe 兜底）
 │   │   ├── audit.py           # 并行审计，progress.jsonl 支持断点续扫
 │   │   ├── stats.py           # 聚合统计（只报告事实）
+│   │   ├── audio.py           # 通道选择/裁剪/重采样/补零（不碰原文件）
+│   │   ├── windows.py         # 位置规则、随机种子、view_hash、窗口表
+│   │   ├── prepare.py         # 确定性分层抽样（D4 扩展为准入）
 │   │   └── adapters/          # 数据集适配器（只解释命名/归属，不碰音频）
-│   └── reporting/             # markdown 报告 + 图
+│   └── reporting/             # markdown 报告 + 图 + 作业预检
 ├── configs/
 │   ├── paths.example.yaml     # 路径模板（真实 paths.local.yaml 不入库）
-│   └── datasets/uaspeech_v1.yaml
+│   ├── datasets/uaspeech_v1.yaml
+│   └── preprocessing/         # native 小样 / 16 kHz 候选配置
 ├── docs/
 │   ├── construction_plan.md   # 宏观架构与分阶段施工说明
 │   ├── data_layer_plan.md     # 数据层补充设计（UAspeech 先行）
@@ -151,15 +161,18 @@ sddbench dataset-report --dataset uaspeech --scan <SCAN_ID> --paths configs/path
 
 ## 五、当前边界（重要）
 
-- **已实现**：`inspect-file`、`stats`（quick/full）、`dataset-report`。
-- **未实现**：`prepare`（选择/裁剪/补零/特征）、`split`（受试者级划分）、`run`/`sweep`/`train`（模型对比）、
+- **已实现**：`inspect-file`、`stats`（quick/full）、`dataset-report`、
+  `extract-features`（D2：通道/裁剪/重采样/补零 → `windows.csv` + 预检；`--features` 暂时拒绝）。
+- **未实现**：MFCC 计算与缓存（D3）、`prepare` 正式准入/`split`（D4+）、`run`/`sweep`/`train`（模型对比）、
   `cache`、`dashboard`。这些命令会返回非零并明确提示"未实现"。
 - **不做的事**：不自动选观察长度、不自动选采样率、不自动选麦克风、不把目录名当标签、
   不删除任何"疑似异常"样本。这些都需要人工依据 `report.md` 的决策点拍板。
-- **状态**：阶段0 与 D1 均"待人工验收"（见 `docs/acceptance_log.md`），验收通过后才进入 D2。
+- **状态**：阶段0、D1、D2 均"待人工验收"（见 `docs/acceptance_log.md`），验收通过后才进入下一阶段。
+  施工细节与命令证据见 `docs/construction_log.md`。
 
 ## 六、下一步
 
-1. 人工验收 D1：对照 `artifacts/inventory/uaspeech/<scan_id>/report.md` 复核数字与决策点。
+1. 人工验收 D1/D2：对照 `artifacts/inventory/uaspeech/<scan_id>/report.md` 与
+   `artifacts/feature_jobs/<job_id>/inspection.md` 复核数字与决策点。
 2. 核查标签：核对官方语料说明，填写 `label_review/uaspeech_label_review.csv`，确定 `confirmed_label`。
-3. 进入 D2：按选定 L 与采样率做裁剪/补零，并验证窗口索引与可复现性。
+3. 进入 D3：在已确认的窗口索引上计算 MFCC 统计量并建立可复用缓存。

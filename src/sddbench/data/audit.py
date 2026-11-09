@@ -11,7 +11,6 @@ they never judge disease, quality scores, or automatically exclude samples
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -19,7 +18,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .decoders import DecodeError, decode, extension_matches, probe
+from .decoders import DecodeError, decode, extension_matches, file_sha256, probe
 from .schema import (
     CATEGORY_AUDIO,
     COL_ALL_ZERO,
@@ -58,11 +57,7 @@ def audit_config_defaults() -> dict:
 
 
 def _sha256(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
+    return file_sha256(path)
 
 
 def audit_one(root_str: str, rel: str, mode: str, quality_cfg: dict) -> dict:

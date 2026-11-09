@@ -1,0 +1,24 @@
+# 统一 16 kHz 主协议候选（D2 起可预检，长度仍待人工批准）
+# 说明：本文件只是"候选"，不是已批准主协议。变更需在施工日志留记录。
+# 长度依据 D1 长度候选表（L=4.0 s）：保留 91.4% 有效声音，总补零比例 42.6%；
+#   L=2.0 s 补零少但截去更多，L=6/10 s 补零迅速升高。4.0 s 覆盖到 P90=3.88 s。
+# 重采样使用锁定实现的 torchaudio sinc_interp_hann（参数见 data/audio.py）。
+schema_version: "1.0"
+name: speech_common16k_candidate
+description: "Common 16 kHz candidate: resample, head 4 s, right zero pad"
+profile: technical_only
+sample_rate_policy: resample
+allow_mixed_native: false
+target_sample_rate: 16000
+channel_policy: select
+channel_index: 0
+view_mode: single_segment
+observe_seconds: 4.0
+window_seconds: 4.0
+position: head
+crop_seed: 0
+short_policy: right_zero_pad
+amplitude_normalization: none
+frame_ms: 25.0
+hop_ms: 10.0
+crop_algorithm_version: "1.0"

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "sddbench"
 version = "0.1.0"
-description = "Speech disease recognition dataset benchmark - data layer (stage 0 + D1)"
+description = "Speech disease recognition dataset benchmark - data layer (stage 0 + D1/D2)"
 requires-python = ">=3.10"
 dependencies = [
     "numpy>=1.24",
@@ -17,6 +17,8 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["pytest>=7"]
+# Locked resampler / MFCC frontend. CPU wheels are enough; record versions in job.json.
+features = ["torch>=2.0", "torchaudio>=2.0"]
 
 [project.scripts]
 sddbench = "sddbench.cli:main"

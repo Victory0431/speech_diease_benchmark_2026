@@ -1,0 +1,24 @@
+# 技术验证用小样配置（D2/D3）：保持原始采样率，不重采样
+# 说明：2.0 s 只用于"小样技术验证"，不是 UAspeech 正式主长度。
+# 依据 D1 全库统计（scan 20261109T171421+0800_uaspeech_full_dd025653）：
+#   全库 143,290 条，全部 WAV/PCM_16/16000 Hz/单声道；时长 P50=2.06 s、P90=3.88 s。
+#   选 2.0 s：补零比例 7.8%，但会截去约 26.6% 的总声音（适合快速技术验证）。
+schema_version: "1.0"
+name: uaspeech_native_smoke
+description: "UAspeech technical smoke: native Hz, head 2 s, right zero pad"
+profile: technical_only
+sample_rate_policy: native
+allow_mixed_native: false
+target_sample_rate: null
+channel_policy: select
+channel_index: 0
+view_mode: single_segment
+observe_seconds: 2.0
+window_seconds: 2.0
+position: head
+crop_seed: 0
+short_policy: right_zero_pad
+amplitude_normalization: none
+frame_ms: 25.0
+hop_ms: 10.0
+crop_algorithm_version: "1.0"
