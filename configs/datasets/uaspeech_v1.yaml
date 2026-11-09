@@ -1,0 +1,23 @@
+# UAspeech 数据任务定义 v1 —— 待人工核验（数据层文档 §5）
+# 本文件声明"这个库怎么解释"；不声明裁剪长度、采样率或任何模型参数。
+task_id: uaspeech_v1
+dataset_id: uaspeech
+adapter: uaspeech
+task_version: 1
+admission: pending_review          # 人工完成 label_review 后才能改为 approved（D4）
+
+naming:
+  # <speaker_token>_<block_token>_<prompt_token>_<mic_token>.wav
+  # token 含义为候选解析，需与官方语料说明核对后才赋予正式字段
+  pattern: "{speaker}_{block}_{prompt}_{mic}"
+
+# directory_group 只作为"目录事实"保存（Disorder/Healthy），不是已批准训练标签。
+# 已知疑点：C 前缀说话人（官方约定为 Control）在本库全部位于 Disorder 目录，
+# 与官方命名约定疑似倒置；必须先对照原始语料说明并完成 label_review。
+label_review:
+  file: label_review/uaspeech_label_review.csv   # 相对 workspace_root；缺失则全部 pending
+  columns: [speaker_token, directory_group, confirmed_subject_id, confirmed_label, evidence, review_status]
+
+selection: null                    # D1 只统计；任务选择规则在 D4 定
+labels: null                       # 标签映射未核验，禁止填写
+evaluation_unit: subject

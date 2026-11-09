@@ -1,0 +1,89 @@
+# =============================================================
+# sddbench —— 提交策略
+#   代码、配置模板、文档、测试：提交
+#   实验产物 artifacts/：只提交"总览统计"（见下方白名单），大文件一律忽略
+#   原始数据集音频：永不提交（患者录音，隐私与体积双重原因）
+# =============================================================
+
+# ---- 本机路径绑定（含绝对路径，绝不入库）----
+configs/paths.local.yaml
+
+# ---- 原始音频 / 数据集文件（任何位置出现都不提交）----
+*.wav
+*.wave
+*.flac
+*.mp3
+*.ogg
+*.oga
+*.opus
+*.m4a
+*.aac
+*.wma
+*.aiff
+*.aif
+*.aifc
+*.webm
+*.au
+*.snd
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.bz2
+*.xz
+*.rar
+*.7z
+._*
+
+# ---- 实验产物白名单：默认全部忽略，只放行总览统计 ----
+artifacts/**
+!artifacts/inventory/
+artifacts/inventory/**
+!artifacts/inventory/uaspeech/
+artifacts/inventory/uaspeech/**
+!artifacts/inventory/uaspeech/*/
+artifacts/inventory/uaspeech/*/**
+!artifacts/inventory/uaspeech/*/meta.json
+!artifacts/inventory/uaspeech/*/statistics.json
+!artifacts/inventory/uaspeech/*/report.md
+!artifacts/inventory/uaspeech/*/issues.csv
+!artifacts/inventory/uaspeech/*/group_statistics.csv
+!artifacts/inventory/uaspeech/*/length_candidates.csv
+!artifacts/inventory/uaspeech/*/length_candidates_by_group.csv
+!artifacts/inventory/uaspeech/*/figures/
+!artifacts/inventory/uaspeech/*/figures/*.png
+
+# ---- 大文件兜底（即使将来有人改白名单也拦住）----
+# 逐文件清单（73MB）与断点续扫日志（119MB）属于可再生大文件
+artifacts/**/files.csv
+artifacts/**/progress.jsonl
+artifacts/**/windows*.npz
+*.npz
+*.npy
+*.pt
+*.pth
+*.onnx
+*.h5
+*.joblib
+*.pkl
+*.feather
+*.parquet
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ---- 编辑器 / 系统 ----
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp

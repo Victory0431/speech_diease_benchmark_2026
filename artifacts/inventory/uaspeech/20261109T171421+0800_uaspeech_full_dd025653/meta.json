@@ -1,0 +1,45 @@
+{
+  "scan_id": "20261109T171421+0800_uaspeech_full_dd025653",
+  "dataset_id": "uaspeech",
+  "mode": "full",
+  "dataset_root": "/mnt/data/test1/Speech_Disease_Recognition_Dataset_Benchmark/fresh_datasets/UAspeech",
+  "status": "completed",
+  "started_at": "2026-11-09T17:23:17+08:00",
+  "finished_at": "2026-11-09T17:23:25+08:00",
+  "tools": {
+    "soundfile": "0.14.0",
+    "libsndfile": "1.2.2",
+    "ffprobe": null
+  },
+  "quality_cfg": {
+    "near_full_threshold": 0.99,
+    "short_duration_sec": 0.1
+  },
+  "directory_fingerprint": "dd0256530267eaf06b974c14bc0edc09e9f3f99e3b5a62ec2c15b141d9e18072",
+  "workers": 32,
+  "task_config": {
+    "task_id": "uaspeech_v1",
+    "dataset_id": "uaspeech",
+    "adapter": "uaspeech",
+    "task_version": 1,
+    "admission": "pending_review",
+    "naming": {
+      "pattern": "{speaker}_{block}_{prompt}_{mic}"
+    },
+    "label_review": {
+      "file": "label_review/uaspeech_label_review.csv",
+      "columns": [
+        "speaker_token",
+        "directory_group",
+        "confirmed_subject_id",
+        "confirmed_label",
+        "evidence",
+        "review_status"
+      ]
+    },
+    "selection": null,
+    "labels": null,
+    "evaluation_unit": "subject"
+  },
+  "elapsed_sec": 13.7
+}
