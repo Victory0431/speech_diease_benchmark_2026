@@ -23,18 +23,21 @@ from .config import ConfigError, dataset_root, load_paths, resolve_under, worksp
 from .data.adapters.registry import get_adapter
 from .data.adapters.uaspeech import parse_stem  # noqa: F401  (used via adapter)
 from .data.audit import audit_config_defaults, run_audit
-from .data.decoders import DecodeError, decode, probe, tool_versions
+from .data.decoders import DecodeError, decode, file_sha256, probe, tool_versions
 from .data.scan import scan_files
 from .data.schema import (
     CATEGORY_AUDIO,
     COL_BLOCK_TOKEN,
     COL_CATEGORY,
+    COL_CHANNELS,
     COL_DECODE_STATUS,
     COL_DIRECTORY_GROUP,
     COL_DURATION_DECODED_SEC,
     COL_FILE_NAME,
+    COL_LABEL_RAW,
     COL_MIC_TOKEN,
     COL_N_SAMPLES,
+    COL_ORIGIN_ID,
     COL_PARSE_STATUS,
     COL_PROBE_STATUS,
     COL_PROMPT_TOKEN,
@@ -45,9 +48,30 @@ from .data.schema import (
     COL_SPEAKER_TOKEN,
     FILES_COLUMNS,
     ISSUE_COLUMNS,
+    MANIFEST_COLUMNS,
 )
 from .data.stats import collect_statistics
-from .data.prepare import stratified_sample
+from .data.prepare import eligible_rows, stratified_sample
+from .data.admission import (
+    AdmissionError,
+    STATUS_APPROVED,
+    STATUS_LABEL_REVIEW_INCOMPLETE,
+    STATUS_LABEL_REVIEW_MISSING,
+    STATUS_MIC_NOT_SELECTED,
+    STATUS_NO_ROWS,
+    STATUS_ORIGIN_CONFLICT,
+    STATUS_ORIGIN_DUPLICATE,
+    STATUS_SUBJECT_CONFLICT,
+    build_manifest,
+    load_label_review,
+    manifest_fingerprint,
+    review_inventory,
+    review_status_rows,
+    select_rows,
+    validate_review,
+    write_review_template,
+)
+from .reporting.admission_report import render_admission
 from .data.windows import (
     WINDOW_COLUMNS,
     PreprocessConfigError,
@@ -66,7 +90,7 @@ from .features.mfcc import (
     normalize_feature_config,
 )
 
-NOT_IMPLEMENTED = ("prepare", "split", "run", "sweep", "cache", "train", "summarize", "dashboard")
+NOT_IMPLEMENTED = ("split", "run", "sweep", "cache", "train", "summarize", "dashboard")
 
 
 def _now_iso() -> str:
@@ -120,6 +144,191 @@ def _dir_fingerprint(rows: list[dict]) -> str:
 
 
 # ---------------------------------------------------------------- commands
+
+
+def _read_scan(files_csv: Path, required: list[str]) -> list[dict]:
+    missing = [c for c in required if c not in pd.read_csv(files_csv, nrows=0).columns]
+    if missing:
+        raise ConfigError(f"files.csv missing columns {missing}; regenerate the scan")
+    return pd.read_csv(files_csv, usecols=required).to_dict("records")
+
+
+def cmd_prepare(args) -> int:
+    """D4: label review + mic/origin rules -> approved, person-isolated manifest."""
+    t0 = time.time()
+    paths = load_paths(args.paths)
+    root = dataset_root(paths, args.dataset)
+    repo_root = Path(args.repo_root).resolve() if args.repo_root else Path.cwd()
+    task_cfg = _load_task_config(repo_root, args.dataset, args.task)
+    task_id = str(task_cfg.get("task_id") or f"{args.dataset}_v1")
+    selection = dict(task_cfg.get("selection") or {})
+    if args.mic:
+        selection["mic"] = args.mic
+
+    scan_dir = workspace_dir(paths, "inventory", args.dataset, args.source, create=False)
+    meta_file = scan_dir / "meta.json"
+    if not meta_file.is_file():
+        raise ConfigError(f"--source scan not found: {scan_dir}")
+    scan_meta = json.loads(meta_file.read_text(encoding="utf-8"))
+    if scan_meta.get("status") != "completed" or scan_meta.get("mode") != "full":
+        raise ConfigError(f"source scan {args.source} must be full/completed "
+                          f"(got mode={scan_meta.get('mode')!r}, "
+                          f"status={scan_meta.get('status')!r})")
+    files_csv = scan_dir / "files.csv"
+    if not files_csv.is_file():
+        raise ConfigError(f"source scan has no files.csv: {files_csv}")
+
+    required = [COL_RELATIVE_PATH, COL_CATEGORY, COL_DECODE_STATUS, COL_PARSE_STATUS,
+                COL_DIRECTORY_GROUP, COL_SPEAKER_TOKEN, COL_ORIGIN_ID, COL_MIC_TOKEN,
+                COL_LABEL_RAW, COL_SAMPLE_RATE, COL_CHANNELS, COL_DURATION_DECODED_SEC,
+                COL_SHA256]
+    all_rows = _read_scan(files_csv, required)
+    inventory = review_inventory(all_rows)
+    print(f"[prepare] dataset={args.dataset} task={task_id} source={args.source} "
+          f"eligible={len(eligible_rows(all_rows))} speakers={len(inventory)}")
+
+    review_rel = (task_cfg.get("label_review") or {}).get(
+        "file", f"label_review/{args.dataset}_label_review.csv")
+    review_path = (Path(args.review).expanduser() if args.review
+                   else Path(paths["workspace_root"]) / str(review_rel))
+    review_path = review_path.resolve()
+
+    if args.write_review_template:
+        try:
+            write_review_template(review_path, inventory, force=args.force)
+        except AdmissionError as e:
+            raise ConfigError(str(e)) from e
+        print(f"[prepare] wrote pending review template: {review_path}")
+
+    review_exists = review_path.is_file()
+    try:
+        review = load_label_review(review_path)
+    except AdmissionError as e:
+        raise ConfigError(str(e)) from e
+
+    selected, select_issues, select_blockers = select_rows(all_rows, selection)
+    selected_inventory = review_inventory(selected)
+    check = validate_review(review, selected_inventory)
+
+    blockers: list[dict] = list(select_issues)
+    if not review_exists:
+        status = STATUS_LABEL_REVIEW_MISSING
+        blockers.insert(0, {
+            "issue_type": "label_review_missing", "severity": "error", "relative_path": "",
+            "detail": f"no confirmed review file at {review_path}; run with "
+                      "--write-review-template, fill evidence/labels, then rerun"})
+    elif check["missing"] or check["unconfirmed"] or check["incomplete"]:
+        status = STATUS_LABEL_REVIEW_INCOMPLETE
+        blockers = check["blocking"] + blockers
+    elif check["subject_conflicts"] or check["subject_aliases"]:
+        status = STATUS_SUBJECT_CONFLICT
+        blockers = check["blocking"] + blockers
+    elif STATUS_NO_ROWS in select_blockers:
+        status = STATUS_NO_ROWS
+    elif STATUS_MIC_NOT_SELECTED in select_blockers:
+        status = STATUS_MIC_NOT_SELECTED
+    elif STATUS_ORIGIN_DUPLICATE in select_blockers:
+        status = STATUS_ORIGIN_DUPLICATE
+    else:
+        status = STATUS_APPROVED
+
+    manifest: list[dict] = []
+    manifest_fp = ""
+    if status == STATUS_APPROVED:
+        manifest, manifest_issues = build_manifest(
+            selected, check["confirmed"], args.dataset, review_path, selection)
+        errors = [i for i in manifest_issues if i.get("severity") == "error"]
+        if errors:
+            status = STATUS_ORIGIN_CONFLICT
+            blockers = errors + blockers
+        elif not manifest:
+            status = STATUS_NO_ROWS
+            manifest = []
+        else:
+            manifest_fp = manifest_fingerprint(manifest)
+
+    base_job_id = f"{_stamp()}_{args.dataset}_prepare"
+    job_id = base_job_id
+    suffix = 0
+    while workspace_dir(paths, "prepared", task_id, job_id, create=False).exists():
+        suffix += 1
+        job_id = f"{base_job_id}_{suffix:02d}"
+    out_dir = workspace_dir(paths, "prepared", task_id, job_id)
+    print(f"[prepare] status={status}")
+    print(f"[prepare] output dir: {out_dir}")
+
+    review_rows = review_status_rows(inventory, review)
+    label_counts = Counter(m["label"] for m in manifest)
+    counts = {
+        "n_eligible": len(eligible_rows(all_rows)),
+        "n_selected": len(selected),
+        "n_speakers": len(inventory),
+        "n_selected_speakers": len(selected_inventory),
+        "n_manifest": len(manifest),
+        "n_subjects": len({m["subject_id"] for m in manifest}),
+        "n_origins": len({m["origin_id"] for m in manifest}),
+    }
+    job = {
+        "job_id": job_id, "task_id": task_id, "dataset_id": args.dataset,
+        "dataset_root": str(root), "scan_id": args.source,
+        "scan_dir": str(scan_dir), "out_dir": str(out_dir),
+        "status": status, "selection": selection,
+        "review_path": str(review_path), "review_exists": review_exists,
+        "review": {
+            "n_inventory": len(inventory),
+            "n_confirmed": len(check["confirmed"]),
+            "missing": check["missing"],
+            "unconfirmed": check["unconfirmed"],
+            "incomplete": check["incomplete"],
+            "subject_conflicts": check["subject_conflicts"],
+            "subject_aliases": check["subject_aliases"],
+        },
+        "review_rows": review_rows,
+        "blockers": blockers,
+        "counts": counts,
+        "label_counts": dict(sorted(label_counts.items())),
+        "manifest_fingerprint": manifest_fp,
+        "started_at": _now_iso(), "finished_at": _now_iso(),
+        "elapsed_sec": round(time.time() - t0, 3),
+    }
+
+    pd.DataFrame(review_rows, columns=[
+        "speaker_token", "directory_group", "n_files", "n_origins", "mic_tokens",
+        "review_status", "confirmed_subject_id", "confirmed_label", "evidence",
+    ]).to_csv(out_dir / "label_review_status.csv", index=False)
+    pd.DataFrame(blockers, columns=ISSUE_COLUMNS).to_csv(out_dir / "issues.csv", index=False)
+    (out_dir / "admission.md").write_text(render_admission(job), encoding="utf-8")
+    (out_dir / "admission.json").write_text(
+        json.dumps(job, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+
+    import yaml
+    task_out = {k: v for k, v in task_cfg.items() if not k.startswith("_")}
+    (out_dir / "task.yaml").write_text(
+        yaml.safe_dump(task_out, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    provenance = {
+        "dataset_id": args.dataset, "task_id": task_id,
+        "scan_id": args.source, "scan_meta": str(meta_file),
+        "dataset_root": str(root), "review_file": str(review_path),
+        "review_sha256": (file_sha256(review_path) if review_exists else None),
+        "selection": selection, "generated_at": _now_iso(),
+        "tool_version": __version__, "status": status,
+    }
+    (out_dir / "provenance.json").write_text(
+        json.dumps(provenance, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    if status == STATUS_APPROVED:
+        pd.DataFrame(manifest, columns=MANIFEST_COLUMNS).to_csv(
+            out_dir / "manifest.csv", index=False)
+        print(f"[prepare] APPROVED manifest rows={len(manifest)} "
+              f"subjects={counts['n_subjects']} labels={job['label_counts']}")
+        return 0
+
+    print(f"[prepare] BLOCKED: {len(blockers)} blocker(s). "
+          f"No manifest.csv written; see {out_dir / 'admission.md'}")
+    for b in blockers[:5]:
+        print(f"  - {b['issue_type']}: {b['detail'][:180]}")
+    return 3
+
 
 def cmd_inspect_file(args) -> int:
     paths = load_paths(args.paths)
@@ -590,6 +799,24 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--scan", required=True)
     sp.add_argument("--paths", required=True)
     sp.set_defaults(func=cmd_dataset_report)
+
+    sp = sub.add_parser(
+        "prepare",
+        help="label review + mic/origin rules -> approved, person-isolated manifest")
+    sp.add_argument("--dataset", required=True)
+    sp.add_argument("--source", required=True, help="source scan id (full mode)")
+    sp.add_argument("--task", default=None, help="task config yaml (default configs/datasets/<dataset>_v1.yaml)")
+    sp.add_argument("--review", default=None,
+                    help="label review csv (default: label_review.file from the task config)")
+    sp.add_argument("--mic", default=None,
+                    help="microphone token to keep (overrides selection.mic)")
+    sp.add_argument("--write-review-template", action="store_true",
+                    help="create a pending review template for every observed speaker")
+    sp.add_argument("--force", action="store_true",
+                    help="replace an existing review template")
+    sp.add_argument("--paths", required=True)
+    sp.add_argument("--repo-root", default=None)
+    sp.set_defaults(func=cmd_prepare)
 
     sp = sub.add_parser(
         "extract-features",

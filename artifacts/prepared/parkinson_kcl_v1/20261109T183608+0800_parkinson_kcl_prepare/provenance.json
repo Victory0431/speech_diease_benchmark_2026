@@ -1,0 +1,19 @@
+{
+  "dataset_id": "parkinson_kcl",
+  "task_id": "parkinson_kcl_v1",
+  "scan_id": "20261109T183508+0800_parkinson_kcl_full_a83761e1",
+  "scan_meta": "/mnt/data/test1/Speech_Disease_Recognition_Dataset_Benchmark/2026_new_mission/speech_disease_benchmark_workspace20261109/artifacts/inventory/parkinson_kcl/20261109T183508+0800_parkinson_kcl_full_a83761e1/meta.json",
+  "dataset_root": "/mnt/data/test1/Speech_Disease_Recognition_Dataset_Benchmark/fresh_datasets/Parkinson_KCL_2017",
+  "review_file": "/mnt/data/test1/Speech_Disease_Recognition_Dataset_Benchmark/2026_new_mission/speech_disease_benchmark_workspace20261109/artifacts/label_review/parkinson_kcl_label_review.csv",
+  "review_sha256": "64ef0963bfdc5437f23b33f1216092629e319747b048aefbbb680822219677ed",
+  "selection": {
+    "mic": null,
+    "require_mic": false,
+    "one_per_origin": true,
+    "variant": "original",
+    "elicitation": "unknown"
+  },
+  "generated_at": "2026-11-09T18:36:08+08:00",
+  "tool_version": "0.1.0",
+  "status": "blocked_label_review_incomplete"
+}

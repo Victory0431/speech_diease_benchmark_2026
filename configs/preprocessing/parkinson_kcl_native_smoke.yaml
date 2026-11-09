@@ -1,0 +1,20 @@
+# 技术验证：Parkinson KCL 原生 44.1 kHz、单通道、头部 4 s。不是最终训练配置。
+schema_version: "1.0"
+name: parkinson_kcl_native_smoke
+description: "Parkinson KCL technical smoke: native 44.1 kHz, head 4 s, right zero pad"
+profile: technical_only
+sample_rate_policy: native
+allow_mixed_native: false
+target_sample_rate: null
+channel_policy: select
+channel_index: 0
+view_mode: single_segment
+observe_seconds: 4.0
+window_seconds: 4.0
+position: head
+crop_seed: 0
+short_policy: right_zero_pad
+amplitude_normalization: none
+frame_ms: 25.0
+hop_ms: 10.0
+crop_algorithm_version: "1.0"

@@ -1,0 +1,3 @@
+issue_type,severity,relative_path,detail
+label_review_unconfirmed,error,,"37 speakers are not confirmed: ['ID00@Healthy', 'ID01@Healthy', 'ID03@Healthy', 'ID05@Healthy', 'ID08@Healthy', 'ID09@Healthy', 'ID10@Healthy', 'ID11@Healthy', 'ID12@Healthy', 'ID14@Healthy']"
+multiple_rows_per_origin,error,,"1 origins have >1 selected row after the mic rule; examples: [(('ID22', 'ID22|hc|0_0_0'), 2)]"

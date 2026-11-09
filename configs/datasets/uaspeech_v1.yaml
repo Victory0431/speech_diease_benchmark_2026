@@ -18,6 +18,10 @@ label_review:
   file: label_review/uaspeech_label_review.csv   # 相对 workspace_root；缺失则全部 pending
   columns: [speaker_token, directory_group, confirmed_subject_id, confirmed_label, evidence, review_status]
 
-selection: null                    # D1 只统计；任务选择规则在 D4 定
+selection:                         # D4 准入规则（人工决策，不自动选择）
+  mic: null                        # 必须显式指定（如 M2/M3）；未指定则 prepare 阻断
+  one_per_origin: true             # speaker+block+prompt 的多 mic 文件只保留一条
+  variant: original
+  elicitation: unknown             # 词项语义未核验前不冒充朗读/访谈
 labels: null                       # 标签映射未核验，禁止填写
 evaluation_unit: subject

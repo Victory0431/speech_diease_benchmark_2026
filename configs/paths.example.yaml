@@ -3,4 +3,5 @@
 workspace_root: /REPLACE_ME/speech_disease_benchmark_workspace20261109/artifacts
 dataset_roots:
   uaspeech: /REPLACE_ME/fresh_datasets/UAspeech
+  parkinson_kcl: /REPLACE_ME/fresh_datasets/Parkinson_KCL_2017
   # 后续数据集在此追加；键名 = dataset_id，值 = 该库原始只读根目录

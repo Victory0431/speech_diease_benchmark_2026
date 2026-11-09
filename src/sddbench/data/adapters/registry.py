@@ -3,10 +3,12 @@ from __future__ import annotations
 
 from ...config import ConfigError
 from .base import DatasetAdapter
+from .parkinson_kcl import ParkinsonKCLAdapter
 from .uaspeech import UASpeechAdapter
 
 ADAPTERS: dict[str, type[DatasetAdapter]] = {
     "uaspeech": UASpeechAdapter,
+    "parkinson_kcl": ParkinsonKCLAdapter,
 }
 
 

@@ -1,0 +1,54 @@
+{
+  "scan_id": "20261109T183508+0800_parkinson_kcl_full_a83761e1",
+  "dataset_id": "parkinson_kcl",
+  "mode": "full",
+  "dataset_root": "/mnt/data/test1/Speech_Disease_Recognition_Dataset_Benchmark/fresh_datasets/Parkinson_KCL_2017",
+  "status": "completed",
+  "started_at": "2026-11-09T18:35:08+08:00",
+  "finished_at": "2026-11-09T18:35:22+08:00",
+  "tools": {
+    "soundfile": "0.14.0",
+    "libsndfile": "1.2.2",
+    "ffprobe": null
+  },
+  "quality_cfg": {
+    "near_full_threshold": 0.99,
+    "short_duration_sec": 0.1
+  },
+  "directory_fingerprint": "a83761e169e98cbf8127c904c4e7e61d899ea3ebf79447047165a22200fb1b37",
+  "workers": 4,
+  "task_config": {
+    "task_id": "parkinson_kcl_v1",
+    "dataset_id": "parkinson_kcl",
+    "adapter": "parkinson_kcl",
+    "task_version": 1,
+    "admission": "pending_review",
+    "naming": {
+      "pattern": "{speaker}_{kind}_{session}",
+      "speaker_token": "ID<nn>",
+      "kind_token": "hc|pd",
+      "session_tokens": "未核验"
+    },
+    "label_review": {
+      "file": "label_review/parkinson_kcl_label_review.csv",
+      "columns": [
+        "speaker_token",
+        "directory_group",
+        "confirmed_subject_id",
+        "confirmed_label",
+        "evidence",
+        "review_status"
+      ]
+    },
+    "selection": {
+      "mic": null,
+      "require_mic": false,
+      "one_per_origin": true,
+      "variant": "original",
+      "elicitation": "unknown"
+    },
+    "labels": null,
+    "evaluation_unit": "subject"
+  },
+  "elapsed_sec": 13.7
+}

@@ -1,0 +1,4 @@
+issue_type,severity,relative_path,detail
+label_review_unconfirmed,error,,"28 speakers are not confirmed: ['CF02@Disorder', 'CF03@Disorder', 'CF04@Disorder', 'CF05@Disorder', 'CM01@Disorder', 'CM04@Disorder', 'CM05@Disorder', 'CM06@Disorder', 'CM08@Disorder', 'CM09@Disorder']"
+mic_not_selected,error,,this dataset has multiple microphones per utterance; set selection.mic in the task config (or --mic) before building an approved manifest
+multiple_rows_per_origin,error,,"21382 origins have >1 selected row after the mic rule; examples: [(('CF02', 'CF02|B1|C10'), 7), (('CF02', 'CF02|B1|C11'), 7), (('CF02', 'CF02|B1|C12'), 7), (('CF02', 'CF02|B1|C13'), 7), (('CF02', 'CF02|B1|C14'), 7), (('CF02', 'CF02|B1|C15'), 7), (('CF02', 'CF02|B1|C16'), 7), (('CF02', 'CF02|B1|C17'), 7), (('CF02', 'CF02|B1|C18'), 7), (('CF02', 'CF02|B1|C19'), 7)]"

@@ -1,0 +1,27 @@
+# Parkinson KCL 2017 数据任务定义 v1 —— 待人工核验（数据层文档 §5）
+# 本文件声明"这个库怎么解释"；不声明裁剪长度、采样率或任何模型参数。
+task_id: parkinson_kcl_v1
+dataset_id: parkinson_kcl
+adapter: parkinson_kcl
+task_version: 1
+admission: pending_review          # label_review 确认后才能改为 approved
+
+naming:
+  # ID<nn>[_](hc|pd)_<session tokens>[_<take>].wav
+  pattern: "{speaker}_{kind}_{session}"
+  speaker_token: ID<nn>            # 本地实测 ID00..ID36；Healthy/Parkinson 无重叠
+  kind_token: hc|pd                # hc=healthy-control, pd=Parkinson（候选）
+  session_tokens: 未核验             # 0_0_0 / 2_0_0 / ... 含义待对照原始说明
+
+label_review:
+  file: label_review/parkinson_kcl_label_review.csv
+  columns: [speaker_token, directory_group, confirmed_subject_id, confirmed_label, evidence, review_status]
+
+selection:
+  mic: null                        # 本库单通道、无麦克风 token；不适用
+  require_mic: false
+  one_per_origin: true             # 每个录音文件视为一个 origin；_1 后缀待人工判断
+  variant: original
+  elicitation: unknown
+labels: null                       # hc/pd 是文件名 token，未核验前不写正式标签
+evaluation_unit: subject

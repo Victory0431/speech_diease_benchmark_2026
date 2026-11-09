@@ -47,16 +47,12 @@ from ..schema import (
     COL_REVIEW_STATUS,
     COL_SPEAKER_TOKEN,
     CATEGORY_AUDIO,
+    LABEL_REVIEW_COLUMNS,
 )
 
 STEM_PATTERN = re.compile(
     r"^(?P<speaker>[A-Za-z]+\d+)_(?P<block>B\d+)_(?P<prompt>[A-Z]+\d*)_(?P<mic>M\d+)$"
 )
-
-REVIEW_COLUMNS = [
-    "speaker_token", "directory_group", "confirmed_subject_id",
-    "confirmed_label", "evidence", "review_status",
-]
 
 
 def parse_stem(stem: str) -> dict | None:
@@ -83,7 +79,7 @@ def load_label_review(path: Path) -> dict[tuple[str, str], dict]:
                    row.get("directory_group", "").strip())
             if key == ("", ""):
                 continue
-            table[key] = {c: row.get(c, "").strip() for c in REVIEW_COLUMNS}
+            table[key] = {c: row.get(c, "").strip() for c in LABEL_REVIEW_COLUMNS}
     return table
 
 

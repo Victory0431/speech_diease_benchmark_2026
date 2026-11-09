@@ -68,6 +68,25 @@ FILES_COLUMNS = [
     COL_QUALITY_NONFINITE, COL_ALL_ZERO, COL_QUALITY_PER_CHANNEL,
 ]
 
+# --- D4 admission: label review + approved manifest (schema source of truth) ---
+LABEL_REVIEW_COLUMNS = [
+    "speaker_token", "directory_group", "confirmed_subject_id",
+    "confirmed_label", "evidence", "review_status",
+]
+COL_SUBJECT_ID = "subject_id"
+COL_GROUP_ID = "group_id"
+COL_LABEL = "label"
+COL_VARIANT = "variant"
+COL_ELICITATION = "elicitation"
+COL_OFFICIAL_SPLIT = "official_split"
+COL_LABEL_SOURCE = "label_source"
+MANIFEST_COLUMNS = [
+    "sample_id", COL_RELATIVE_PATH, COL_SUBJECT_ID, COL_GROUP_ID, COL_ORIGIN_ID,
+    COL_LABEL_RAW, COL_LABEL, COL_VARIANT, COL_ELICITATION,
+    COL_SAMPLE_RATE, COL_DURATION_DECODED_SEC, COL_CHANNELS, COL_SHA256,
+    COL_OFFICIAL_SPLIT, COL_LABEL_SOURCE,
+]
+
 CATEGORY_AUDIO = "audio_candidate"
 CATEGORY_ARCHIVE = "archive"
 CATEGORY_SIDECAR = "sidecar"

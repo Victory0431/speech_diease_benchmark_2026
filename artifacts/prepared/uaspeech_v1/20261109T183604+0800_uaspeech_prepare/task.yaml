@@ -1,0 +1,23 @@
+task_id: uaspeech_v1
+dataset_id: uaspeech
+adapter: uaspeech
+task_version: 1
+admission: pending_review
+naming:
+  pattern: '{speaker}_{block}_{prompt}_{mic}'
+label_review:
+  file: label_review/uaspeech_label_review.csv
+  columns:
+  - speaker_token
+  - directory_group
+  - confirmed_subject_id
+  - confirmed_label
+  - evidence
+  - review_status
+selection:
+  mic: null
+  one_per_origin: true
+  variant: original
+  elicitation: unknown
+labels: null
+evaluation_unit: subject

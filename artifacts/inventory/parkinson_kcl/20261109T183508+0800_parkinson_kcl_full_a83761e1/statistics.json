@@ -1,0 +1,652 @@
+{
+  "counts": {
+    "total_discovered": 73,
+    "audio_candidates": 73,
+    "probe_ok": 73,
+    "probe_failed": 0,
+    "decoded_ok": 73,
+    "decode_failed": 0,
+    "archives": 0,
+    "sidecar": 0,
+    "unknown": 0,
+    "extension_mismatch": 0,
+    "parse_failed": 0
+  },
+  "formats": {
+    "extensions": {
+      ".wav": {
+        "count": 73,
+        "ratio": 1.0
+      }
+    },
+    "containers": {
+      "WAV": {
+        "count": 73,
+        "ratio": 1.0
+      }
+    },
+    "encodings": {
+      "PCM_24": {
+        "count": 73,
+        "ratio": 1.0
+      }
+    }
+  },
+  "sample_rates": {
+    "decoded": {
+      "44100": {
+        "count": 73,
+        "ratio": 1.0
+      }
+    },
+    "header": {
+      "44100": {
+        "count": 73,
+        "ratio": 1.0
+      }
+    }
+  },
+  "channels": {
+    "decoded": {
+      "1": {
+        "count": 73,
+        "ratio": 1.0
+      }
+    }
+  },
+  "duration_seconds": {
+    "decoded_full": {
+      "n": 73,
+      "min": 73.03902494331066,
+      "max": 220.63916099773243,
+      "mean": 141.3491681421427,
+      "std": 31.113985936446426,
+      "total": 10318.489274376418,
+      "p10": 95.76237641723357,
+      "p25": 122.20575963718821,
+      "p50": 141.29226757369614,
+      "p60": 147.8098140589569,
+      "p80": 166.842,
+      "p90": 178.0057097505669,
+      "p95": 195.56691609977318,
+      "p99": 212.45440997732427
+    },
+    "header_estimate_quick": {
+      "n": 73,
+      "min": 73.03902494331066,
+      "max": 220.63916099773243,
+      "mean": 141.3491681421427,
+      "std": 31.113985936446426,
+      "total": 10318.489274376418,
+      "p10": 95.76237641723357,
+      "p25": 122.20575963718821,
+      "p50": 141.29226757369614,
+      "p60": 147.8098140589569,
+      "p80": 166.842,
+      "p90": 178.0057097505669,
+      "p95": 195.56691609977318,
+      "p99": 212.45440997732427
+    },
+    "quantile_method": "linear",
+    "weighting": "equal per recording",
+    "per_speaker_median": {
+      "n": 37,
+      "min": 85.74224489795918,
+      "max": 195.6368253968254,
+      "mean": 140.5977232334375,
+      "std": 22.06899812874869,
+      "total": 5202.115759637188,
+      "p10": 119.01942176870747,
+      "p25": 131.04761904761904,
+      "p50": 140.5929365079365,
+      "p60": 146.66361904761905,
+      "p80": 156.5663492063492,
+      "p90": 166.5462857142857,
+      "p95": 174.68515192743763,
+      "p99": 189.45625396825398
+    }
+  },
+  "groups": {
+    "by_directory_group": {
+      "Healthy": {
+        "n_files": 42,
+        "n_decoded_ok": 42,
+        "n_decode_failed": 0,
+        "n_speakers": 21,
+        "duration_sec": {
+          "n": 42,
+          "min": 76.35263038548753,
+          "max": 220.63916099773243,
+          "mean": 144.10696523053664,
+          "std": 29.80608522189118,
+          "total": 6052.492539682539,
+          "p10": 111.17170975056689,
+          "p25": 126.20302154195011,
+          "p50": 144.8326303854875,
+          "p60": 149.52950566893423,
+          "p80": 167.1939954648526,
+          "p90": 173.97673469387755,
+          "p95": 192.55129024943307,
+          "p99": 213.65145011337862
+        }
+      },
+      "Parkinson": {
+        "n_files": 31,
+        "n_decoded_ok": 31,
+        "n_decode_failed": 0,
+        "n_speakers": 16,
+        "duration_sec": {
+          "n": 31,
+          "min": 73.03902494331066,
+          "max": 209.27145124716554,
+          "mean": 137.6127978933509,
+          "std": 32.430934911917966,
+          "total": 4265.996734693877,
+          "p10": 93.36138321995465,
+          "p25": 120.15639455782313,
+          "p50": 139.58074829931974,
+          "p60": 141.93798185941043,
+          "p80": 157.55666666666667,
+          "p90": 178.92011337868482,
+          "p95": 194.41907029478458,
+          "p99": 206.32617233560092
+        }
+      }
+    },
+    "by_directory_and_mic": {
+      "Healthy|": {
+        "n_files": 42,
+        "n_probe_ok": 42
+      },
+      "Parkinson|": {
+        "n_files": 31,
+        "n_probe_ok": 31
+      }
+    },
+    "speakers": {
+      "ID00": {
+        "directory_group": "Healthy",
+        "n_files": 2,
+        "duration_sec_median": 135.47721088435375
+      },
+      "ID01": {
+        "directory_group": "Healthy",
+        "n_files": 2,
+        "duration_sec_median": 140.5929365079365
+      },
+      "ID02": {
+        "directory_group": "Parkinson",
+        "n_files": 2,
+        "duration_sec_median": 173.47047619047618
+      },
+      "ID03": {
+        "directory_group": "Healthy",
+        "n_files": 2,
+        "duration_sec_median": 146.83428571428573
+      },
+      "ID04": {
+        "directory_group": "Parkinson",
+        "n_files": 2,
+        "duration_sec_median": 134.68444444444444
+      },
+      "ID05": {
+        "directory_group": "Healthy",
+        "n_files": 2,
+        "duration_sec_median": 147.7079365079365
+      },
+      "ID06": {
+        "directory_group": "Parkinson",
+        "n_files": 2,
+        "duration_sec_median": 153.62031746031747
+      },
+      "ID07": {
+        "directory_group": "Parkinson",
+        "n_files": 2,
+        "duration_sec_median": 178.46857142857144
+      },
+      "ID08": {
+        "directory_group": "Healthy",
+        "n_files": 2,
+        "duration_sec_median": 137.24444444444447
+      },
+      "ID09": {
+        "directory_group": "Healthy",
+        "n_files": 2,
+        "duration_sec_median": 133.38412698412696
+      },
+      "ID10": {
+        "directory_group": "Healthy",
+        "n_files": 2,
+        "duration_sec_median": 153.11238095238096
+      },
+      "ID11": {
+        "directory_group": "Healthy",
+        "n_files": 2,
+        "duration_sec_median": 157.29777777777778
+      },
+      "ID12": {
+        "directory_group": "Healthy",
+        "n_files": 2,
+        "duration_sec_median": 147.87047619047618
+      },
+      "ID13": {
+        "directory_group": "Parkinson",
+        "n_files": 2,
+        "duration_sec_median": 146.40761904761905
+      },
+      "ID14": {
+        "directory_group": "Healthy",
+        "n_files": 2,
+        "duration_sec_median": 153.6406349206349
+      },
+      "ID15": {
+        "directory_group": "Healthy",
+        "n_files": 2,
+        "duration_sec_median": 195.6368253968254
+      },
+      "ID16": {
+        "directory_group": "Parkinson",
+        "n_files": 2,
+        "duration_sec_median": 161.93015873015872
+      },
+      "ID17": {
+        "directory_group": "Parkinson",
+        "n_files": 2,
+        "duration_sec_median": 131.88063492063492
+      },
+      "ID18": {
+        "directory_group": "Parkinson",
+        "n_files": 1,
+        "duration_sec_median": 85.74224489795918
+      },
+      "ID19": {
+        "directory_group": "Healthy",
+        "n_files": 2,
+        "duration_sec_median": 116.60190476190476
+      },
+      "ID20": {
+        "directory_group": "Parkinson",
+        "n_files": 2,
+        "duration_sec_median": 125.68380952380951
+      },
+      "ID21": {
+        "directory_group": "Healthy",
+        "n_files": 2,
+        "duration_sec_median": 105.65079365079364
+      },
+      "ID22": {
+        "directory_group": "Healthy",
+        "n_files": 2,
+        "duration_sec_median": 158.84190476190474
+      },
+      "ID23": {
+        "directory_group": "Healthy",
+        "n_files": 2,
+        "duration_sec_median": 173.7392970521542
+      },
+      "ID24": {
+        "directory_group": "Parkinson",
+        "n_files": 2,
+        "duration_sec_median": 140.75936507936507
+      },
+      "ID25": {
+        "directory_group": "Healthy",
+        "n_files": 2,
+        "duration_sec_median": 158.0495238095238
+      },
+      "ID26": {
+        "directory_group": "Healthy",
+        "n_files": 2,
+        "duration_sec_median": 142.01904761904763
+      },
+      "ID27": {
+        "directory_group": "Parkinson",
+        "n_files": 2,
+        "duration_sec_median": 128.04063492063491
+      },
+      "ID28": {
+        "directory_group": "Healthy",
+        "n_files": 2,
+        "duration_sec_median": 131.04761904761904
+      },
+      "ID29": {
+        "directory_group": "Parkinson",
+        "n_files": 2,
+        "duration_sec_median": 148.0126984126984
+      },
+      "ID30": {
+        "directory_group": "Parkinson",
+        "n_files": 2,
+        "duration_sec_median": 132.40266439909297
+      },
+      "ID31": {
+        "directory_group": "Healthy",
+        "n_files": 2,
+        "duration_sec_median": 134.664126984127
+      },
+      "ID32": {
+        "directory_group": "Parkinson",
+        "n_files": 2,
+        "duration_sec_median": 89.20268707482994
+      },
+      "ID33": {
+        "directory_group": "Parkinson",
+        "n_files": 2,
+        "duration_sec_median": 120.63109977324262
+      },
+      "ID34": {
+        "directory_group": "Parkinson",
+        "n_files": 2,
+        "duration_sec_median": 124.93206349206349
+      },
+      "ID35": {
+        "directory_group": "Healthy",
+        "n_files": 2,
+        "duration_sec_median": 120.84825396825397
+      },
+      "ID36": {
+        "directory_group": "Healthy",
+        "n_files": 2,
+        "duration_sec_median": 135.9847619047619
+      }
+    },
+    "prompt_classes": {},
+    "duration_by_prompt_class": {},
+    "duration_by_mic": {}
+  },
+  "quality": {
+    "peak": {
+      "n": 73,
+      "min": 0.07501220703125,
+      "max": 0.999969482421875,
+      "mean": 0.3081560526808647,
+      "std": 0.18386703697775636,
+      "total": 22.495391845703125,
+      "p10": 0.124420166015625,
+      "p25": 0.168914794921875,
+      "p50": 0.262237548828125,
+      "p60": 0.313653564453125,
+      "p80": 0.45452270507812503,
+      "p90": 0.539373779296875,
+      "p95": 0.5834228515624997,
+      "p99": 0.998409423828125
+    },
+    "rms": {
+      "n": 73,
+      "min": 0.005078669394394178,
+      "max": 0.0351160420081481,
+      "mean": 0.014146240211819636,
+      "std": 0.007402789157466427,
+      "total": 1.0326755354628334,
+      "p10": 0.007550272195364887,
+      "p25": 0.00953027140017304,
+      "p50": 0.011418482508868665,
+      "p60": 0.012770441224767788,
+      "p80": 0.01898958457806691,
+      "p90": 0.02644518770092525,
+      "p95": 0.03088756623626524,
+      "p99": 0.033978086671653314
+    },
+    "near_full_ratio": {
+      "n": 73,
+      "min": 0.0,
+      "max": 3.1046056514378514e-07,
+      "mean": 5.660733053130134e-09,
+      "std": 3.785495691297415e-08,
+      "total": 4.132335128784998e-07,
+      "p10": 0.0,
+      "p25": 0.0,
+      "p50": 0.0,
+      "p60": 0.0,
+      "p80": 0.0,
+      "p90": 0.0,
+      "p95": 0.0,
+      "p99": 1.6092548060925461e-07
+    },
+    "n_all_zero": 0,
+    "n_nonfinite_samples_files": 0,
+    "n_extremely_short": 0
+  },
+  "anomalies": {
+    "probe_failed_examples": [],
+    "decode_failed_reasons": {},
+    "probe_warnings": {}
+  },
+  "length_candidates": [
+    {
+      "L_sec": 1.0,
+      "n_recordings": 73,
+      "n_shorter_than_L": 0,
+      "ratio_shorter_than_L": 0.0,
+      "n_longer_than_L": 73,
+      "ratio_longer_than_L": 73.0,
+      "valid_seconds_total": 73.0,
+      "padded_seconds_total": 0.0,
+      "truncated_seconds_total": 10245.489274376418,
+      "total_padding_ratio": 0.0,
+      "mean_per_recording_padding_ratio": 0.0,
+      "retention_ratio": 0.007074679059974276
+    },
+    {
+      "L_sec": 2.0,
+      "n_recordings": 73,
+      "n_shorter_than_L": 0,
+      "ratio_shorter_than_L": 0.0,
+      "n_longer_than_L": 73,
+      "ratio_longer_than_L": 73.0,
+      "valid_seconds_total": 146.0,
+      "padded_seconds_total": 0.0,
+      "truncated_seconds_total": 10172.489274376418,
+      "total_padding_ratio": 0.0,
+      "mean_per_recording_padding_ratio": 0.0,
+      "retention_ratio": 0.014149358119948552
+    },
+    {
+      "L_sec": 4.0,
+      "n_recordings": 73,
+      "n_shorter_than_L": 0,
+      "ratio_shorter_than_L": 0.0,
+      "n_longer_than_L": 73,
+      "ratio_longer_than_L": 73.0,
+      "valid_seconds_total": 292.0,
+      "padded_seconds_total": 0.0,
+      "truncated_seconds_total": 10026.489274376418,
+      "total_padding_ratio": 0.0,
+      "mean_per_recording_padding_ratio": 0.0,
+      "retention_ratio": 0.028298716239897104
+    },
+    {
+      "L_sec": 6.0,
+      "n_recordings": 73,
+      "n_shorter_than_L": 0,
+      "ratio_shorter_than_L": 0.0,
+      "n_longer_than_L": 73,
+      "ratio_longer_than_L": 73.0,
+      "valid_seconds_total": 438.0,
+      "padded_seconds_total": 0.0,
+      "truncated_seconds_total": 9880.489274376418,
+      "total_padding_ratio": 0.0,
+      "mean_per_recording_padding_ratio": 0.0,
+      "retention_ratio": 0.042448074359845656
+    },
+    {
+      "L_sec": 10.0,
+      "n_recordings": 73,
+      "n_shorter_than_L": 0,
+      "ratio_shorter_than_L": 0.0,
+      "n_longer_than_L": 73,
+      "ratio_longer_than_L": 73.0,
+      "valid_seconds_total": 730.0,
+      "padded_seconds_total": 0.0,
+      "truncated_seconds_total": 9588.489274376418,
+      "total_padding_ratio": 0.0,
+      "mean_per_recording_padding_ratio": 0.0,
+      "retention_ratio": 0.07074679059974276
+    }
+  ],
+  "length_candidates_by_group": [
+    {
+      "group": "Healthy",
+      "L_sec": 1.0,
+      "n_recordings": 42,
+      "n_shorter_than_L": 0,
+      "ratio_shorter_than_L": 0.0,
+      "n_longer_than_L": 42,
+      "ratio_longer_than_L": 42.0,
+      "valid_seconds_total": 42.0,
+      "padded_seconds_total": 0.0,
+      "truncated_seconds_total": 6010.492539682539,
+      "total_padding_ratio": 0.0,
+      "mean_per_recording_padding_ratio": 0.0,
+      "retention_ratio": 0.006939289842099162
+    },
+    {
+      "group": "Healthy",
+      "L_sec": 2.0,
+      "n_recordings": 42,
+      "n_shorter_than_L": 0,
+      "ratio_shorter_than_L": 0.0,
+      "n_longer_than_L": 42,
+      "ratio_longer_than_L": 42.0,
+      "valid_seconds_total": 84.0,
+      "padded_seconds_total": 0.0,
+      "truncated_seconds_total": 5968.492539682539,
+      "total_padding_ratio": 0.0,
+      "mean_per_recording_padding_ratio": 0.0,
+      "retention_ratio": 0.013878579684198323
+    },
+    {
+      "group": "Healthy",
+      "L_sec": 4.0,
+      "n_recordings": 42,
+      "n_shorter_than_L": 0,
+      "ratio_shorter_than_L": 0.0,
+      "n_longer_than_L": 42,
+      "ratio_longer_than_L": 42.0,
+      "valid_seconds_total": 168.0,
+      "padded_seconds_total": 0.0,
+      "truncated_seconds_total": 5884.492539682539,
+      "total_padding_ratio": 0.0,
+      "mean_per_recording_padding_ratio": 0.0,
+      "retention_ratio": 0.027757159368396647
+    },
+    {
+      "group": "Healthy",
+      "L_sec": 6.0,
+      "n_recordings": 42,
+      "n_shorter_than_L": 0,
+      "ratio_shorter_than_L": 0.0,
+      "n_longer_than_L": 42,
+      "ratio_longer_than_L": 42.0,
+      "valid_seconds_total": 252.0,
+      "padded_seconds_total": 0.0,
+      "truncated_seconds_total": 5800.492539682539,
+      "total_padding_ratio": 0.0,
+      "mean_per_recording_padding_ratio": 0.0,
+      "retention_ratio": 0.04163573905259497
+    },
+    {
+      "group": "Healthy",
+      "L_sec": 10.0,
+      "n_recordings": 42,
+      "n_shorter_than_L": 0,
+      "ratio_shorter_than_L": 0.0,
+      "n_longer_than_L": 42,
+      "ratio_longer_than_L": 42.0,
+      "valid_seconds_total": 420.0,
+      "padded_seconds_total": 0.0,
+      "truncated_seconds_total": 5632.49253968254,
+      "total_padding_ratio": 0.0,
+      "mean_per_recording_padding_ratio": 0.0,
+      "retention_ratio": 0.06939289842099161
+    },
+    {
+      "group": "Parkinson",
+      "L_sec": 1.0,
+      "n_recordings": 31,
+      "n_shorter_than_L": 0,
+      "ratio_shorter_than_L": 0.0,
+      "n_longer_than_L": 31,
+      "ratio_longer_than_L": 31.0,
+      "valid_seconds_total": 31.0,
+      "padded_seconds_total": 0.0,
+      "truncated_seconds_total": 4234.996734693877,
+      "total_padding_ratio": 0.0,
+      "mean_per_recording_padding_ratio": 0.0,
+      "retention_ratio": 0.007266765993486988
+    },
+    {
+      "group": "Parkinson",
+      "L_sec": 2.0,
+      "n_recordings": 31,
+      "n_shorter_than_L": 0,
+      "ratio_shorter_than_L": 0.0,
+      "n_longer_than_L": 31,
+      "ratio_longer_than_L": 31.0,
+      "valid_seconds_total": 62.0,
+      "padded_seconds_total": 0.0,
+      "truncated_seconds_total": 4203.996734693877,
+      "total_padding_ratio": 0.0,
+      "mean_per_recording_padding_ratio": 0.0,
+      "retention_ratio": 0.014533531986973975
+    },
+    {
+      "group": "Parkinson",
+      "L_sec": 4.0,
+      "n_recordings": 31,
+      "n_shorter_than_L": 0,
+      "ratio_shorter_than_L": 0.0,
+      "n_longer_than_L": 31,
+      "ratio_longer_than_L": 31.0,
+      "valid_seconds_total": 124.0,
+      "padded_seconds_total": 0.0,
+      "truncated_seconds_total": 4141.996734693877,
+      "total_padding_ratio": 0.0,
+      "mean_per_recording_padding_ratio": 0.0,
+      "retention_ratio": 0.02906706397394795
+    },
+    {
+      "group": "Parkinson",
+      "L_sec": 6.0,
+      "n_recordings": 31,
+      "n_shorter_than_L": 0,
+      "ratio_shorter_than_L": 0.0,
+      "n_longer_than_L": 31,
+      "ratio_longer_than_L": 31.0,
+      "valid_seconds_total": 186.0,
+      "padded_seconds_total": 0.0,
+      "truncated_seconds_total": 4079.996734693878,
+      "total_padding_ratio": 0.0,
+      "mean_per_recording_padding_ratio": 0.0,
+      "retention_ratio": 0.043600595960921924
+    },
+    {
+      "group": "Parkinson",
+      "L_sec": 10.0,
+      "n_recordings": 31,
+      "n_shorter_than_L": 0,
+      "ratio_shorter_than_L": 0.0,
+      "n_longer_than_L": 31,
+      "ratio_longer_than_L": 31.0,
+      "valid_seconds_total": 310.0,
+      "padded_seconds_total": 0.0,
+      "truncated_seconds_total": 3955.996734693878,
+      "total_padding_ratio": 0.0,
+      "mean_per_recording_padding_ratio": 0.0,
+      "retention_ratio": 0.07266765993486987
+    }
+  ],
+  "length_candidate_lengths_sec": [
+    1.0,
+    2.0,
+    4.0,
+    6.0,
+    10.0
+  ],
+  "schema_version": "1.0",
+  "scan_id": "20261109T183508+0800_parkinson_kcl_full_a83761e1",
+  "scope": {
+    "mode": "full",
+    "dataset_id": "parkinson_kcl"
+  }
+}

@@ -153,4 +153,109 @@ sddbench extract-features --dataset uaspeech \
 
 ---
 
-## D4 —— 标签复核、批准清单与第二数据集（施工中）
+## D4 —— 标签复核、批准清单与第二数据集（已完成并推送）
+
+### 目标
+1. 建立"人工复核 -> 批准清单"的门禁：没有逐人 `confirmed` 标签，绝不产出 `manifest.csv`。
+2. 落实麦克风/origin/人员隔离规则，保证后续 split 可以按人隔离。
+3. 接入第二个数据集（选定 Parkinson KCL 2017），复用全部通用代码。
+4. 保持原始数据只读，不自动翻转标签、不自动选麦克风。
+
+### 第二库选择
+检查 `fresh_datasets` 后有两个候选：
+- `EATD`：485 条抑郁/健康语音，16 kHz 混合单/双声道；文件名只有情绪词
+  (`positive/negative/neutral_out_N`)，**没有说话人 ID**，无法做人员隔离。
+- `Parkinson_KCL_2017`：73 条长录音，44.1 kHz/PCM_24/单声道；文件名含 `ID<nn>`
+  与 `hc/pd`，可解析 speaker，适合作为第二适配器。
+
+选定 **Parkinson_KCL_2017**（不下载、不改名、不移动任何文件）。
+
+### 实现
+| 文件 | 作用 |
+| --- | --- |
+| `src/sddbench/data/schema.py` | 新增 `LABEL_REVIEW_COLUMNS`、`MANIFEST_COLUMNS` 与 subject/group/label 等列常量 |
+| `src/sddbench/data/admission.py` | 复核表加载/模板生成/覆盖检查、mic+origin 选择、人员隔离、manifest 指纹 |
+| `src/sddbench/data/adapters/parkinson_kcl.py` | 解析 `ID<nn>_?hc/pd_...`；只产出候选事实与告警 |
+| `src/sddbench/data/adapters/registry.py` | 注册 `parkinson_kcl` |
+| `src/sddbench/reporting/admission_report.py` | 生成中文 `admission.md` |
+| `src/sddbench/cli.py` | 新增 `prepare` 命令；`prepare` 从"未实现"名单移除 |
+| `configs/datasets/uaspeech_v1.yaml` | 增加 `selection`（mic 必须显式指定，`one_per_origin=true`） |
+| `configs/datasets/parkinson_kcl_v1.yaml` | 第二库任务定义（无 mic 维度） |
+| `configs/preprocessing/parkinson_kcl_native_smoke.yaml` | 44.1 kHz / head 4 s 技术验证 |
+| `tests/test_admission.py` | 7 个测试：KCL 命名、缺复核、pending、批准路径、mic 阻断、subject 冲突、第二库复用 |
+| `docs/datasets/parkinson_kcl.md` | 第二库档案与已知问题 |
+
+### 准入规则（硬性）
+1. `label_review.csv` 必须存在，列固定为
+   `speaker_token,directory_group,confirmed_subject_id,confirmed_label,evidence,review_status`。
+2. 本次选择涉及的每位 speaker 都必须是 `review_status=confirmed`，且 subject/label 非空；
+   缺失、pending、confirmed 但字段为空都阻断。
+3. 同一 `confirmed_subject_id` 不得出现两个 label，也不得绑定两个 speaker token。
+4. UAspeech 有 7 麦克风；必须显式 `selection.mic`（或 `--mic`），否则阻断。
+   选定后每个 `speaker|block|prompt` origin 必须只剩一条。
+5. KCL 无 mic 维度；`require_mic=false`。
+6. 任一 origin 归到两个 subject/label 都阻断。
+7. 通过后 `group_id = <dataset>:<subject_id>`，`label_source` 记录复核文件行号；
+   `manifest.csv` 才允许写出。
+
+### 实跑（2026-11-09）
+第二库全库统计：
+```bash
+sddbench stats --dataset parkinson_kcl --mode full --workers 4 --paths configs/paths.local.yaml
+```
+- scan：`20261109T183508+0800_parkinson_kcl_full_a83761e1`
+- 真实输出：`decoded 73/73, failed 0, parse_failed 0`，15.0 s
+- 73 条 WAV/PCM_24/44100 Hz/单声道；P50 141.3 s，P90 178.0 s，总计 10,318.5 s；
+  Healthy 42 条/21 人，Parkinson 31 条/16 人。
+
+第二库特征技术验证：
+```bash
+sddbench extract-features --dataset parkinson_kcl \
+  --source 20261109T183508+0800_parkinson_kcl_full_a83761e1 \
+  --preprocess configs/preprocessing/parkinson_kcl_native_smoke.yaml \
+  --features configs/features/mfcc20_stats.yaml \
+  --limit 6 --cache-mode shared --previews 3 --paths configs/paths.local.yaml
+```
+- job：`20261109T183546+0800_parkinson_kcl_views_head_4s_539b0061`
+- `windows built=6/6`，`features new=6 cached=0 failed=0`，状态 `completed`
+- 44.1 kHz 前端几何：`win_length=1103`、`hop_length=441`、`n_fft=2048`；MFCC 40 维
+- 共享缓存 key：`mfcc_stats_7c1bdbbeb6594e5c`
+
+UAspeech 准入（生成模板 + 尝试批准）：
+```bash
+sddbench prepare --dataset uaspeech \
+  --source 20261109T171421+0800_uaspeech_full_dd025653 \
+  --write-review-template --paths configs/paths.local.yaml
+```
+- 模板：`artifacts/label_review/uaspeech_label_review.csv`（28 人，全部 `pending`）
+- 输出：`artifacts/prepared/uaspeech_v1/20261109T183604+0800_uaspeech_prepare/`
+- 真实结果：`status=blocked_label_review_incomplete`，退出码 3，未写 `manifest.csv`
+- 阻断：28 人未确认；未选 mic；21,382 个 origin 在未选 mic 时有 7 条重复
+
+KCL 准入：
+```bash
+sddbench prepare --dataset parkinson_kcl \
+  --source 20261109T183508+0800_parkinson_kcl_full_a83761e1 \
+  --write-review-template --paths configs/paths.local.yaml
+```
+- 模板：`artifacts/label_review/parkinson_kcl_label_review.csv`（37 人，全部 `pending`）
+- 输出：`artifacts/prepared/parkinson_kcl_v1/20261109T183608+0800_parkinson_kcl_prepare/`
+- 真实结果：`status=blocked_label_review_incomplete`，退出码 3，未写 `manifest.csv`
+- 额外阻断：`ID22_hc_0_0_0` 与 `ID22hc_0_0_0` 归一化后 origin 相同但时长/哈希不同，
+  记为 `multiple_rows_per_origin`，等待人工确认两者关系
+
+测试：`python -m pytest tests -q` → **47 passed**。
+批准路径由 `tests/test_admission.py::test_confirmed_review_writes_manifest` 覆盖：
+合成复核表全部 confirmed 后，`prepare` 写出 3 行、3 个 subject、唯一 origin 的
+`manifest.csv`，并记录 `label_source` 行号。
+
+### 决策与偏差
+- 真实数据**不允许**由施工者代填 `confirmed` 标签，因此两个库的准入都停在阻断态；
+  这不是未完成，而是 D4 设计要求的"没有证据就不出清单"。
+- 第二库选 KCL 而不是 EATD：EATD 缺说话人 ID，无法满足人员隔离；KCL 的 `ID<nn>` 可直接分组。
+- UAspeech 的 `selection.mic` 保持 `null`：D1 已发现 Healthy 组 M2 覆盖异常，
+  选哪个麦克风是研究决策，不能由代码代选。
+- KCL 的 `hc/pd` 只作为候选：目录与文件名词元一致仍不等于人工确认。
+- `ID22` 命名冲突不自动去重：两条时长/哈希不同，不能假定是同一条录音。
+- `manifest.csv` 不提交 Git（可能很大）；`admission.md/json`、复核模板等小体积证据提交。
+- `.gitignore` 新增 KCL 统计白名单与 D4 准入证据白名单，仍不包含任何音频/特征缓存。

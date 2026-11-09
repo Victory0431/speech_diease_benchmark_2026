@@ -125,3 +125,50 @@
   4. 确认测量前后原始音频 SHA256 不变。
 - 结论：待人工验收
 - 代码提交号：见 `git log --grep "D3"`
+
+## D4（标签复核、批准清单与第二数据集）——待验收
+
+- 日期：2026-11-09
+- 施工内容：`data/admission.py`、`adapters/parkinson_kcl.py`、`reporting/admission_report.py`、
+  `prepare` 命令、`configs/datasets/parkinson_kcl_v1.yaml`、
+  `configs/preprocessing/parkinson_kcl_native_smoke.yaml`、`tests/test_admission.py`、
+  `docs/datasets/parkinson_kcl.md`。
+- 实际执行：
+  - 第二库统计：`sddbench stats --dataset parkinson_kcl --mode full --workers 4 ...`
+    → `decoded 73/73, failed 0, parse_failed 0`（15.0 s）；
+    scan `20261109T183508+0800_parkinson_kcl_full_a83761e1`；
+  - 第二库特征：`extract-features ... --limit 6 --cache-mode shared --previews 3`
+    → `windows built=6/6`，`features new=6 cached=0 failed=0`，`completed`；
+    job `20261109T183546+0800_parkinson_kcl_views_head_4s_539b0061`；
+  - UAspeech 准入：`prepare ... --write-review-template` → 退出码 3，
+    `blocked_label_review_incomplete`，未写 `manifest.csv`；
+  - KCL 准入：同样退出码 3，`blocked_label_review_incomplete`，未写 `manifest.csv`；
+  - `python -m pytest tests -q` → 47 passed。
+- 证据路径：
+  - `artifacts/inventory/parkinson_kcl/20261109T183508+0800_parkinson_kcl_full_a83761e1/`
+    （`report.md`、`statistics.json`）；
+  - `artifacts/label_review/uaspeech_label_review.csv`（28 行 pending）、
+    `artifacts/label_review/parkinson_kcl_label_review.csv`（37 行 pending）；
+  - `artifacts/prepared/uaspeech_v1/20261109T183604+0800_uaspeech_prepare/`
+    与 `artifacts/prepared/parkinson_kcl_v1/20261109T183608+0800_parkinson_kcl_prepare/`
+    （`admission.md/json`、`label_review_status.csv`、`issues.csv`、`provenance.json`）。
+- 通过项（自检）：
+  - 无复核文件 → `blocked_label_review_missing`；模板 pending → `blocked_label_review_incomplete`；
+  - 全部 confirmed → 写出 `manifest.csv`，`group_id=<dataset>:<subject>`，origin 唯一，
+    `label_source` 指向复核文件行号（合成测试覆盖）；
+  - 同一 subject 两个 label → `blocked_subject_label_conflict`；
+  - UAspeech 未选 mic → `blocked_mic_not_selected`；
+  - KCL 适配器解析 `ID15_hc...`、`ID22hc...`、`ID02_pd..._1`；44.1 kHz 复用同一 MFCC 代码；
+  - 原始音频未被修改/移动。
+- 已知限制：
+  - 两个库的真实 `label_review.csv` 均为 `pending`，因此没有真实 `manifest.csv`；
+  - UAspeech 尚未选 mic；KCL `ID22` 两条文件名归一化冲突待人工确认；
+  - D4 只做准入，不做 `split`。
+- 验收步骤建议：
+  1. 打开两份 `admission.md`，核对阻断项、说话人覆盖与选择规则；
+  2. 检查 `label_review/*.csv` 列与行数（28 / 37），确认全部为 pending；
+  3. 在测试环境把复核行改为 confirmed 并运行 `prepare`，确认能写出 `manifest.csv`；
+  4. 打开 KCL `report.md` 对照 73 条、44.1 kHz、37 人、时长分位数；
+  5. 确认 `artifacts/prepared/*` 下没有 `manifest.csv`，且源数据目录未变化。
+- 结论：待人工验收
+- 代码提交号：见 `git log --grep "D4"`

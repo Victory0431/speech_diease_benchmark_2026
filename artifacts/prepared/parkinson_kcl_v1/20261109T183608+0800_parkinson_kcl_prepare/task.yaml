@@ -1,0 +1,27 @@
+task_id: parkinson_kcl_v1
+dataset_id: parkinson_kcl
+adapter: parkinson_kcl
+task_version: 1
+admission: pending_review
+naming:
+  pattern: '{speaker}_{kind}_{session}'
+  speaker_token: ID<nn>
+  kind_token: hc|pd
+  session_tokens: 未核验
+label_review:
+  file: label_review/parkinson_kcl_label_review.csv
+  columns:
+  - speaker_token
+  - directory_group
+  - confirmed_subject_id
+  - confirmed_label
+  - evidence
+  - review_status
+selection:
+  mic: null
+  require_mic: false
+  one_per_origin: true
+  variant: original
+  elicitation: unknown
+labels: null
+evaluation_unit: subject

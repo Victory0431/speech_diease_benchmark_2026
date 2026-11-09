@@ -53,6 +53,34 @@ artifacts/inventory/uaspeech/*/**
 !artifacts/inventory/uaspeech/*/figures/
 !artifacts/inventory/uaspeech/*/figures/*.png
 
+# ---- 第二个数据集的同规格总览统计 ----
+!artifacts/inventory/parkinson_kcl/
+artifacts/inventory/parkinson_kcl/**
+!artifacts/inventory/parkinson_kcl/*/
+artifacts/inventory/parkinson_kcl/*/**
+!artifacts/inventory/parkinson_kcl/*/meta.json
+!artifacts/inventory/parkinson_kcl/*/statistics.json
+!artifacts/inventory/parkinson_kcl/*/report.md
+!artifacts/inventory/parkinson_kcl/*/issues.csv
+!artifacts/inventory/parkinson_kcl/*/group_statistics.csv
+!artifacts/inventory/parkinson_kcl/*/length_candidates.csv
+!artifacts/inventory/parkinson_kcl/*/length_candidates_by_group.csv
+!artifacts/inventory/parkinson_kcl/*/figures/
+!artifacts/inventory/parkinson_kcl/*/figures/*.png
+
+# ---- D4 准入证据：复核模板与小体积预检结果（不含音频/特征）----
+!artifacts/label_review/
+!artifacts/label_review/*.csv
+!artifacts/prepared/
+!artifacts/prepared/*/
+!artifacts/prepared/*/*/
+!artifacts/prepared/*/*/admission.md
+!artifacts/prepared/*/*/admission.json
+!artifacts/prepared/*/*/label_review_status.csv
+!artifacts/prepared/*/*/issues.csv
+!artifacts/prepared/*/*/task.yaml
+!artifacts/prepared/*/*/provenance.json
+
 # ---- 大文件兜底（即使将来有人改白名单也拦住）----
 # 逐文件清单（73MB）与断点续扫日志（119MB）属于可再生大文件
 artifacts/**/files.csv
