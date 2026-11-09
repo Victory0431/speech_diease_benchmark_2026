@@ -351,3 +351,100 @@ sddbench split --dataset uaspeech --prepared 20261109T193404+0800_uaspeech_prepa
 - split 只按比例分层，未做"每类每集至少 N 人"的更高要求；当前 28 人下 val 只有 5 人，
   指标方差会较大，正式结论需要多 seed / 人员级置信区间。
 - 尚未实现 train/run；模型层在 D6。
+
+---
+
+## D6：模型层与结果层（冻结特征 MLP 基线，2026-11-09）
+
+### 本阶段目的
+把 D3 已经算好的 MFCC 统计量直接当作模型输入，训练一个最小、可复现、可调参的 MLP，
+并把"这次到底用了什么数据、什么划分、什么参数、得到什么结果"打成一个自包含的结果包。
+本阶段不重新提取特征、不重新划分数据，也不做任何自动调参。
+
+### 输入输出约定（与 D3 对齐）
+
+| 项 | 约定 |
+| --- | --- |
+| 输入 | D3 缓存的 `40` 维向量（20 维 MFCC 的 mean + std，`ddof=0`），一个录音一个窗口 |
+| 采样率 | `16000` Hz（由 D3 作业固定，模型层只读取并校验） |
+| 观察窗 | `configs/preprocessing/uaspeech_native_4s_head.yaml`（native、head 4 s、右补零） |
+| 模型 | `40 → 128 → 2`，ReLU，dropout 0.2；输入维从缓存 meta 自动推导，不硬编码 |
+| 输出 | 2 类概率（`control` / `disorder`），阈值 0.5，主评价单位 subject |
+| 标准化 | 只用 train 拟合 mean/std；`best.pt` 里保存同一组参数，供复算 |
+| 权重 | `subject_balanced`：每个 subject 总权重相等，subject 内录音等权；不叠加类别重加权 |
+| 随机性 | 固定 seed、NumPy RNG、torch 单线程；同配置重跑结果一致 |
+
+### 实现
+
+| 文件 | 内容 |
+| --- | --- |
+| `src/sddbench/modeling/features.py` | 按缓存 key 读取 `meta.json`/`index.csv`/`shard_*.npz`；校验 hash、采样率、窗口配方、每样本恰好一个窗口、缺失样本；返回 `(N,40)` float32 |
+| `src/sddbench/modeling/metrics.py` | 混淆矩阵、AUROC、AP、accuracy/balanced accuracy/sensitivity/specificity/precision/F1/log loss/Brier、每类明细 |
+| `src/sddbench/modeling/mlp.py` | `MLP(input_dim, hidden_dims, n_classes, dropout)` |
+| `src/sddbench/modeling/experiment.py` | 默认配置、`--set key=value` 覆盖、小网格展开、`config_hash` |
+| `src/sddbench/modeling/trainer.py` | 读取 manifest/split/特征 → 训练 → 早停 → 预测 → window/recording/subject 指标 → 结果包 |
+| `src/sddbench/modeling/report.py` | 中文报告 + 混淆矩阵/ROC/分数分布/学习曲线（matplotlib Agg） |
+| `src/sddbench/cli.py` | `run --config ... [--set k=v] [--dry-run]` |
+| `configs/experiments/uaspeech_mfcc_mlp_baseline.yaml` | 第一条基线配置（数据 ID、划分 ID、特征配方、模型、训练） |
+
+结果包（`<workspace>/runs/<run_id>/`）：
+`config.yaml`、`run.json`、`history.csv`、`best.pt`、`last.pt`、
+`predictions_windows.csv`、`predictions_recordings.csv`、`predictions_subjects.csv`、
+`metrics.json`、`metrics_per_class.csv`、`feature_cache.json`、`report.md`、`figures/`、`inputs/`。
+
+工程约束：
+- `run.json` 记录 prepared/split ID、特征缓存 key 与 `view_fingerprint`、配置 hash、seed、git commit/dirty；
+- split 与 manifest 通过 fingerprint 绑定，拿旧划分跑新清单会直接报错；
+- 训练前检查同一 subject 不跨 split，发现泄漏立即失败；
+- 预测覆盖检查：每个 split 的窗口数必须等于预期；概率必须有限且每行和为 1。
+
+### 缓存 key 修正
+D5 的缓存 key 只含"配方 + 实际采样率"，导致 2 s 与 4 s 作业会在同一目录为同一录音留下两个窗口，
+模型层无法判断该读哪一个。D6 把 `view_fingerprint`（预处理/裁剪配方）纳入 key：
+- 旧 key：`mfcc_stats_efe488280a7dc9a9`
+- 新 key：`mfcc_stats_7821f53b7b6c12bd`，21,126 条，重算约 40 s
+- 模型加载时同时校验 `feature_hash`、采样率、`view_fingerprint`、每样本唯一窗口。
+
+### 实跑（UAspeech / M3 / seed 0）
+
+```bash
+sddbench run --config configs/experiments/uaspeech_mfcc_mlp_baseline.yaml \
+  --paths configs/paths.local.yaml
+```
+
+- run：`20261109T201821+0800_uaspeech_mfcc_mlp_baseline_s0_a522c1`
+- 代码：`12467350caecb9b8bee80d30123b9c9161aa709d`（dirty=false），耗时 139 s
+- 数据：21,126 条 / 28 人 / 40 维；train 12,711（17 人）、val 3,825（5 人）、test 4,590（6 人）
+- 最佳 epoch 6（val subject balanced accuracy = 1.000；早停按验证集主指标）
+
+| split | 单位 | n | accuracy | balanced acc | sensitivity | specificity | AUROC |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| train | window | 12,711 | 0.978 | 0.978 | 0.976 | 0.980 | 0.998 |
+| val | window | 3,825 | 0.813 | 0.829 | 0.912 | 0.746 | 0.923 |
+| test | window | 4,590 | 0.699 | 0.699 | 0.794 | 0.605 | 0.762 |
+| train | subject | 17 | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 |
+| val | subject | 5 | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 |
+| **test** | **subject** | **6** | **0.833** | **0.833** | **1.000** | **0.667** | **0.889** |
+
+test subject 混淆矩阵：control 3 人中 2 人判对；disorder 3 人全部判对。
+
+### 怎么读这个数
+- 6 位测试说话人只能给出很粗的估计：0.833 等于 5/6 人判对，换一个 seed 可能就变成 4/6 或 6/6；
+- val 只有 5 人，所以"val 1.000"不能当作泛化证据，只能说明早停信号在小样本上很尖；
+- window 指标（0.699）明显低于 subject（0.833），说明单人内部有难/易录音，按人平均后误差被抵消一部分；
+- 这是**流程基线**，不是调优结果；当前配置只训练了 6 个 epoch 就被早停选中。
+
+### 测试
+`python -m pytest tests -q` → **57 passed**（D5 的 51 + 新增 6 个模型层测试）：
+- MLP 输出尺寸与 dropout 行为；
+- 指标对已知预测的数值；
+- `--set` 覆盖、未知键报错、网格展开；
+- 特征加载缺样本报错；
+- 端到端合成数据训练并检查结果包文件、覆盖率、概率合法性、人员隔离；
+- 人为制造同一人员跨 train/test，确认直接失败。
+
+### 已知限制
+- 单 seed、单观察窗、单麦克风；没有置信区间；
+- MLP 只看全局统计量，丢弃时间顺序；
+- 4 s head 窗口对约 42.6% 的录音补零；
+- 结果包中的 `inputs/` 含 manifest/split 快照，属患者级清单，只留在本机，不入库。

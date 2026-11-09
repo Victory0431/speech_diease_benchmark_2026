@@ -208,3 +208,37 @@
   4. 换 `--seed 1` 确认生成新 split_id 且旧目录不被覆盖。
 - 结论：待人工验收
 - 代码提交号：见 `git log --grep "D5"`
+
+## D6（模型层与结果层：冻结特征 MLP 基线）——待验收
+
+- 日期：2026-11-09
+- 施工内容：`modeling/{features,metrics,mlp,experiment,trainer,report}.py`、
+  `cli.py` 的 `run` 子命令、`configs/experiments/uaspeech_mfcc_mlp_baseline.yaml`、
+  `tests/test_modeling.py`；特征缓存 key 纳入 `view_fingerprint`。
+- 实际执行：
+  - 重算 M3 / 4 s 特征（新 key `mfcc_stats_7821f53b7b6c12bd`，21,126 条，约 40 s）；
+  - `run --config configs/experiments/uaspeech_mfcc_mlp_baseline.yaml`
+    → run `20261109T201821+0800_uaspeech_mfcc_mlp_baseline_s0_a522c1`，
+    139 s，代码 `1246735`（dirty=false），最佳 epoch 6；
+  - `python -m pytest tests -q` → 57 passed。
+- 关键结果（test / subject）：n=6，balanced accuracy 0.833，
+  sensitivity 1.000，specificity 0.667，AUROC 0.889；
+  window 层 balanced accuracy 0.699、AUROC 0.762。
+- 证据路径：
+  - `artifacts/runs/20261109T201821+0800_uaspeech_mfcc_mlp_baseline_s0_a522c1/`
+    （`run.json`、`metrics.json`、`predictions_subjects.csv`、`report.md`、`figures/`）
+- 通过项（自检）：
+  - 输入维度从缓存 meta 推导为 40，采样率/配方/每样本窗口数均校验；
+  - 标准化只用 train，`best.pt` 保存可复算参数；
+  - 早停只看 val subject balanced accuracy，test 未参与任何选择；
+  - 同一 subject 不跨 split；人为泄漏会报错；
+  - 预测覆盖完整（12,711 / 3,825 / 4,590），概率每行和为 1；
+  - 同配置重跑指标完全一致（固定 seed、单线程）。
+- 已知限制：6 位测试说话人，指标粒度粗；单 seed；val 仅 5 人。
+- 验收步骤建议：
+  1. 打开 `report.md`，核对数据/划分/配置/最佳 epoch 与指标表；
+  2. 用 `predictions_subjects.csv` 手工重算 balanced accuracy 与混淆矩阵；
+  3. 改 `--set model.dropout=0.0` 重跑，确认新 run 目录、配置快照与指标变化；
+  4. 核对 `run.json` 的 prepared/split/cache key/git commit 与本机一致。
+- 结论：待人工验收
+- 代码提交号：`1246735`；结果与文档提交见紧随其后的 docs 提交

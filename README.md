@@ -3,10 +3,12 @@
 语音疾病（构音障碍）识别基准平台。目标：在同一套数据流水线、同一套评测协议下，
 比较不同模型在"从语音判断说话人是否患病"这件事上的表现，并能公平地扩展到多个数据集。
 
-> 本仓库当前完成了**数据层（阶段0 + D1–D5）**：把数据集摸清楚、量清楚、留证据，
+> 本仓库当前完成了**数据层（D1–D5）+ 模型层（D6）**：把数据集摸清楚、量清楚、留证据，
 > 把"看哪一段声音"固化成可复现的窗口索引，在有效声音上算出可缓存的 MFCC 统计量，
 > 接入第二个数据集、建立"标签未确认就拒绝出训练清单"的准入门禁，
-> 并按说话人隔离地划出 train/val/test；**模型层尚未开始**，相关命令会明确拒绝执行而不是假装成功。
+> 按说话人隔离地划出 train/val/test，并用缓存的 MFCC 跑出**第一条可复现的 MLP 基线**
+> （test 6 人，balanced accuracy 0.833，AUROC 0.889）。
+> 参数扫描与多数据集汇总（`sweep`/`summarize`）尚未开始。
 
 ---
 
@@ -28,13 +30,18 @@
 3. **生成了一份能写进论文的统计报告**：时长分位数、格式分布、每个说话人多少条、
    每个麦克风覆盖多少条，还给出了"如果截断到 1/2/4/6/10 秒，会丢多少、要补多少零"的对照表，
    方便后面秉着数据说话去定观察窗长度，而不是拍脑袋。
-4. **发现了两个必须先弄清楚的问题**（详见下文"必须人工核查的发现"）：
-   一是目录名可能和官方标签是反的；二是某个麦克风在健康组明显缺录音。
-   这两件事不解决，后面任何分类结果都不可信。
+4. **把标签和麦克风问题按"工程事实"处理完了**：
+   - 用户确认本地 `Healthy/`、`Disorder/` 目录就是健康/疾病标签，标签复核全部改为 confirmed；
+   - UAspeech 每条话在 7 个麦克风下各有一份，全部收进来会让同一句话出现 7 次。
+     所以准入时每个 `speaker|block|prompt` 只保留一条，并显式选定 **M3**（覆盖全部 28 人；
+     M2 在 Healthy 组缺约 1/3 录音）。这是防泄漏的工程选择，不是研究结论。
 5. **接入了第二个数据集 Parkinson KCL 2017**：73 条长录音、44.1 kHz/PCM_24、37 位说话人，
    用同一套扫描/统计/窗口/MFCC 代码跑通，证明"加数据集只写适配器"不是口号。
    同时新增**准入门禁**：只有 `label_review.csv` 里逐人确认过身份和标签，才会生成
-   `manifest.csv`；目前两个库都还没有人工确认，所以真实运行被明确阻断，而不是自动猜标签。
+   `manifest.csv`；KCL 仍未确认，所以它的真实运行被明确阻断，而不是自动猜标签。
+6. **搭起模型层并跑出第一条基线**：直接读取 D3 缓存的 40 维 MFCC，
+   训练 `40 → 128 → 2` 的 MLP；按人隔离划分，按人计算主指标，
+   并把配置、权重、逐窗口/逐人预测、指标、图、报告打包成一个可追溯的结果目录。
 
 **没有上传的东西**：原始患者录音一条都没传（隐私 + 体积）；
 这次扫描产生的逐文件清单 `files.csv`（73MB）和断点续扫日志 `progress.jsonl`（119MB）
@@ -46,10 +53,10 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 命令 | `inspect-file`（单文件核查）、`stats`（quick/full 统计，可断点续扫）、`dataset-report`（重建报告）、`extract-features`（窗口索引 + MFCC 统计 + 分片缓存）、`prepare`（标签复核 + 人员隔离清单，未确认则阻断）、`split`（按说话人隔离的分层划分） |
-| 数据层模块 | `scan`（枚举分类）、`decoders`（probe+解码，soundfile 优先、ffprobe 兜底）、`audit`（并行审计+质量摘要）、`stats`（聚合）、`adapters/uaspeech` + `adapters/parkinson_kcl`（命名与归属解释）、`audio`（通道/裁剪/重采样）、`windows`（位置规则+`view_hash`）、`prepare`（确定性分层抽样）、`admission`（复核/隔离/批准清单）、`split`（人员隔离分层划分）、`features/mfcc`（固定配方）、`features/cache`（分片/续算/复用） |
-| 产物 | `files.csv`、`statistics.json`、`meta.json`、`issues.csv`、`length_candidates*.csv`、`report.md`、`figures/*.png`；D2/D3 追加 `windows.csv`、`job.json`、`inspection.md`、可审听预览、`cache/features/mfcc_stats/<feature_key>/`（`meta.json` + `index.csv` + `shard_*.npz`）；D4 追加 `label_review_status.csv`、`admission.json`、`admission.md`、通过时才有 `manifest.csv`；D5 追加 `split.csv`、`split.json`、`split.md` |
-| 测试 | 51 项合成音频测试全绿（不含任何真实患者音频） |
+| 命令 | `inspect-file`（单文件核查）、`stats`（quick/full 统计，可断点续扫）、`dataset-report`（重建报告）、`extract-features`（窗口索引 + MFCC 统计 + 分片缓存）、`prepare`（标签复核 + 人员隔离清单，未确认则阻断）、`split`（按说话人隔离的分层划分）、`run`（冻结特征 MLP 训练 + 结果包） |
+| 数据层模块 | `scan`（枚举分类）、`decoders`（probe+解码，soundfile 优先、ffprobe 兜底）、`audit`（并行审计+质量摘要）、`stats`（聚合）、`adapters/uaspeech` + `adapters/parkinson_kcl`（命名与归属解释）、`audio`（通道/裁剪/重采样）、`windows`（位置规则+`view_hash`）、`prepare`（确定性分层抽样）、`admission`（复核/隔离/批准清单）、`split`（人员隔离分层划分）、`features/mfcc`（固定配方）、`features/cache`（分片/续算/复用）、`modeling/*`（特征读取、指标、MLP、实验配置、训练、报告） |
+| 产物 | `files.csv`、`statistics.json`、`meta.json`、`issues.csv`、`length_candidates*.csv`、`report.md`、`figures/*.png`；D2/D3 追加 `windows.csv`、`job.json`、`inspection.md`、可审听预览、`cache/features/mfcc_stats/<feature_key>/`（`meta.json` + `index.csv` + `shard_*.npz`）；D4 追加 `label_review_status.csv`、`admission.json`、`admission.md`、通过时才有 `manifest.csv`；D5 追加 `split.csv`、`split.json`、`split.md`；D6 追加 `runs/<run_id>/`（`run.json`、`metrics.json`、`predictions_*`、`best.pt`、`report.md`、`figures/`） |
+| 测试 | 57 项合成数据测试全绿（不含任何真实患者音频） |
 | 设计约束 | 适配器不碰解码；统计只报事实不自动选参数；标签未核验前不产出分类清单 |
 
 ### UAspeech 全库统计结果（full 模式，逐条解码）
@@ -83,6 +90,21 @@
 | 结构 | 文件名 `ID<nn>_?hc/pd_...`；`hc`/`pd` 仅作为候选标签，仍需人工复核 |
 | 技术验证 | 6 条 native 44.1 kHz / head 4 s：`win=1103, hop=441, n_fft=2048`，MFCC 40 维、0 失败 |
 | 待处理 | `ID22_hc_0_0_0` 与 `ID22hc_0_0_0` 归一化后 origin 冲突（时长/哈希不同），准入被阻断 |
+
+### D6 第一条 MLP 基线（UAspeech / M3 / head 4 s / seed 0）
+
+| 项 | 结果 |
+| --- | --- |
+| 输入 | 40 维 MFCC 统计量（20 维 mean + std），21,126 条 / 28 人 |
+| 模型 | `40 → 128 → 2`，ReLU，dropout 0.2 |
+| 划分 | train 17 人 / val 5 人 / test 6 人（人员互斥） |
+| 主指标（test，按人） | balanced accuracy **0.833**（5/6 人判对） |
+| 其他（test，按人） | sensitivity 1.000、specificity 0.667、AUROC 0.889 |
+| 参考（test，按录音） | balanced accuracy 0.699、AUROC 0.762 |
+| 运行 | 139 s；代码 `1246735`（dirty=false）；最佳 epoch 6 |
+
+> 这是**流程基线**，不是调优结果：test 只有 6 位说话人，换 seed 可能变成 4/6 或 6/6。
+> 它的价值是证明"数据 → 特征 → 模型 → 指标 → 结果包"已经闭环、可复现、可调参。
 
 ### 必须人工核查的发现
 
@@ -136,6 +158,15 @@ sddbench prepare --dataset uaspeech --source <SCAN_ID> --mic M3 \
 sddbench split --dataset uaspeech --prepared <PREPARED_ID> --seed 0 \
     --paths configs/paths.local.yaml
 
+# D6：先空跑校验配置/划分/特征缓存，再训练并写结果包
+sddbench run --config configs/experiments/uaspeech_mfcc_mlp_baseline.yaml \
+    --dry-run --paths configs/paths.local.yaml
+sddbench run --config configs/experiments/uaspeech_mfcc_mlp_baseline.yaml \
+    --paths configs/paths.local.yaml
+# 改一个参数做对比实验（新 run 目录，不覆盖旧结果）
+sddbench run --config configs/experiments/uaspeech_mfcc_mlp_baseline.yaml \
+    --set model.dropout=0.0 --set training.seed=1 --paths configs/paths.local.yaml
+
 # 第二个数据集：统计 + 4 s 技术验证
 sddbench stats --dataset parkinson_kcl --mode full --paths configs/paths.local.yaml
 sddbench extract-features --dataset parkinson_kcl --source <KCL_SCAN_ID> \
@@ -168,13 +199,15 @@ sddbench extract-features --dataset parkinson_kcl --source <KCL_SCAN_ID> \
 │   │   ├── split.py           # 人员隔离的确定性分层划分
 │   │   └── adapters/          # 数据集适配器（只解释命名/归属，不碰音频）
 │   ├── features/              # MFCC 固定配方 + 分片缓存
+│   ├── modeling/              # 特征读取、指标、MLP、实验配置、训练、结果报告
 │   └── reporting/             # markdown 报告 + 图 + 作业预检
 ├── configs/
 │   ├── paths.example.yaml     # 路径模板（真实 paths.local.yaml 不入库）
 │   ├── datasets/uaspeech_v1.yaml
 │   ├── datasets/parkinson_kcl_v1.yaml
 │   ├── preprocessing/         # native 小样 / 16 kHz 候选配置
-│   └── features/              # mfcc20_stats.yaml
+│   ├── features/              # mfcc20_stats.yaml
+│   └── experiments/           # 基线实验配置（数据 ID、划分 ID、模型、训练）
 ├── docs/
 │   ├── construction_plan.md   # 宏观架构与分阶段施工说明
 │   ├── data_layer_plan.md     # 数据层补充设计（UAspeech 先行）
@@ -185,7 +218,8 @@ sddbench extract-features --dataset parkinson_kcl --source <KCL_SCAN_ID> \
 ├── artifacts/
 │   ├── inventory/...          # 扫描产物：只保留总览统计（见下）
 │   ├── prepared/<task>/...    # 准入证据（manifest.csv 本机再生，不入库）
-│   └── splits/<task>/...      # 划分结果 split.csv/json/md
+│   ├── splits/<task>/...      # 划分结果 split.csv/json/md
+│   └── runs/<run_id>/...      # 模型结果包（权重/预测/指标/图/报告，本机）
 └── tests/                     # 合成音频 fixture 测试
 ```
 
@@ -203,7 +237,8 @@ sddbench extract-features --dataset parkinson_kcl --source <KCL_SCAN_ID> \
 | `artifacts/**/progress.jsonl` | ❌ | 断点续扫日志，119MB |
 | 原始音频（`*.wav` 等所有音频/压缩包） | ❌ | 患者隐私 + 体积 |
 | `configs/paths.local.yaml` | ❌ | 含本机绝对路径 |
-| 缓存/权重（`*.npz`、`*.pt`、`*.npy` 等） | ❌ | 后续阶段产物 |
+| 缓存/权重（`*.npz`、`*.pt`、`*.npy` 等） | ❌ | 体积大；本机可再生 |
+| `artifacts/runs/**` | ❌ | 含权重、逐窗口预测与患者级输入快照；只把指标摘要写进文档/汇总 |
 
 `.gitignore` 对 `artifacts/` 采用**白名单**：默认全部忽略，只逐个放行上面那份总览清单，
 再加一条"大文件兜底"规则，避免以后误提交。
@@ -218,23 +253,25 @@ sddbench extract-features --dataset parkinson_kcl --source <KCL_SCAN_ID> \
 
 - **已实现**：`inspect-file`、`stats`（quick/full）、`dataset-report`、
   `extract-features`（窗口索引 + MFCC 统计 + 缓存，支持 `--mic`）、
-  `prepare`（标签复核/人员隔离/批准清单）、`split`（按人员隔离的分层划分）。
-- **未实现**：`run`/`sweep`/`train`（模型训练与参数实验）、`cache`、`dashboard`。
+  `prepare`（标签复核/人员隔离/批准清单）、`split`（按人员隔离的分层划分）、
+  `run`（冻结特征 MLP 训练与结果包）。
+- **未实现**：`sweep`（参数网格）、`summarize`（多运行汇总）、`cache`、`dashboard`。
   这些命令会返回非零并明确提示"未实现"。
 - **准入现状**：UAspeech 已按人工确认的目录标签与 **M3** 麦克风通过准入，
   得到 21,126 行 manifest（28 人）；KCL 仍是 `pending`，真实运行被阻断。
   UAspeech 选 M3 是工程基线（M2 在 Healthy 组缺录音），不是研究结论。
 - **不做的事**：不自动选观察长度、不自动选采样率、不自动选麦克风、不把目录名当标签、
   不删除任何"疑似异常"样本。这些都需要人工依据 `report.md` 的决策点拍板。
-- **状态**：阶段0、D1–D5 均"待人工验收"（见 `docs/acceptance_log.md`）。
+- **状态**：阶段0、D1–D6 均"待人工验收"（见 `docs/acceptance_log.md`）。
   施工细节与命令证据见 `docs/construction_log.md`。
 
 ## 六、下一步
 
-1. 人工验收 D1–D5：对照 `artifacts/inventory/<dataset>/<scan_id>/report.md`、
+1. 人工验收 D1–D6：对照 `artifacts/inventory/<dataset>/<scan_id>/report.md`、
    `artifacts/feature_jobs/<job_id>/inspection.md`、
    `artifacts/prepared/<task_id>/<job_id>/admission.md`、
-   `artifacts/splits/<task_id>/<split_id>/split.md` 与缓存 `index.csv` 复核数字与决策点。
-2. 模型层（D6）：读取已缓存的 40 维 MFCC，训练 `40 → 128 → 2` 的 MLP，
-   输出 window/recording/subject 三层指标与可追溯结果包。
-3. 实验层（D7）：`sweep` 扫参 + `summarize` 汇总，用于后续接入更多数据集。
+   `artifacts/splits/<task_id>/<split_id>/split.md`、
+   `artifacts/runs/<run_id>/report.md` 与缓存 `index.csv` 复核数字与决策点。
+2. 实验层（D7）：`sweep` 按网格顺序跑多个 `run`，`summarize` 把 `metrics.json`
+   汇成对比表；数据端参数（mic/窗口/采样率）与模型端参数（hidden/dropout/lr）都走同一套配置。
+3. 接入更多数据集：每个库只需适配器 + 标签复核 + prepared/split ID，再复制一份实验配置。
