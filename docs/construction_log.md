@@ -329,6 +329,10 @@ sddbench extract-features --dataset uaspeech \
 - `mic filter 'M3': 21126/143290 rows`
 - `windows built=21126/21126`；`features new=21126 cached=0 failed=0`；约 39.3 s
 - 共享缓存 key：`mfcc_stats_efe488280a7dc9a9`（40 维）
+  > D6 修正：特征缓存 key 原先只含"配方 + 实际采样率"，2 s 与 4 s 两个作业会在同一
+  > key 下为同一 sample 留下两个窗口，模型层无法判断该读哪一个。D6 起 key 纳入
+  > `view_fingerprint`（预处理/裁剪配方），同一配方下才可能复用；因此该作业的缓存
+  > 被重算一次（新 key `mfcc_stats_7821f53b7b6c12bd`，21,126 条，约 40 s）。
 
 ```bash
 sddbench split --dataset uaspeech --prepared 20261109T193404+0800_uaspeech_prepare \

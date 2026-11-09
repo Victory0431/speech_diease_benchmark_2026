@@ -37,16 +37,18 @@ class FeatureCache:
 
     def __init__(self, base_root: Path, cfg: dict, sample_rate: int, *,
                  cache_mode: str, shard_size: int = _MAX_SHARD_ROWS,
-                 impl: dict | None = None):
+                 impl: dict | None = None, view_fingerprint: str | None = None):
         self.cfg = cfg
         self.sample_rate = int(sample_rate)
         self.impl = impl or implementation_info()
         self.cache_mode = cache_mode
         self.shard_size = int(shard_size)
+        self.view_fingerprint = view_fingerprint
         if self.shard_size < 1:
             raise FeatureConfigError(f"shard_size must be positive, got {shard_size!r}")
-        self.feature_hash = feature_hash(cfg, self.sample_rate, self.impl)
-        self.feature_key = feature_key(cfg, self.sample_rate)
+        self.feature_hash = feature_hash(cfg, self.sample_rate, self.impl,
+                                         view_fingerprint)
+        self.feature_key = feature_key(cfg, self.sample_rate, view_fingerprint)
         self.path = Path(base_root) / self.feature_key
         self.path.mkdir(parents=True, exist_ok=True)
         self.meta_path = self.path / "meta.json"
@@ -75,6 +77,10 @@ class FeatureCache:
         if int(meta.get("dim", self.dim)) != self.dim:
             raise FeatureConfigError(
                 f"cache {self.path} dim={meta.get('dim')} != requested {self.dim}")
+        if meta.get("view_fingerprint") != self.view_fingerprint:
+            raise FeatureConfigError(
+                f"cache {self.path} view_fingerprint="
+                f"{meta.get('view_fingerprint')} != requested {self.view_fingerprint}")
         return meta
 
     def _load_index(self) -> list[dict]:
@@ -108,6 +114,7 @@ class FeatureCache:
             "feature_hash": self.feature_hash,
             "status": status,
             "cache_mode": self.cache_mode,
+            "view_fingerprint": self.view_fingerprint,
             "feature_config": self.cfg,
             "implementation": self.impl,
             "sample_rate": self.sample_rate,
@@ -200,6 +207,7 @@ class FeatureCache:
             "feature_hash": self.feature_hash,
             "cache_dir": str(self.path),
             "cache_mode": self.cache_mode,
+            "view_fingerprint": self.view_fingerprint,
             "sample_rate": self.sample_rate,
             "dim": self.dim,
             "n_items": len(self._existing) + len(self._new_rows),
@@ -212,11 +220,13 @@ class FeatureCacheManager:
     """One cache per actual sample rate (native mixed mode stays explicit)."""
 
     def __init__(self, base_root: Path, cfg: dict, *, cache_mode: str,
-                 shard_size: int = _MAX_SHARD_ROWS):
+                 shard_size: int = _MAX_SHARD_ROWS,
+                 view_fingerprint: str | None = None):
         self.base_root = Path(base_root)
         self.cfg = cfg
         self.cache_mode = cache_mode
         self.shard_size = shard_size
+        self.view_fingerprint = view_fingerprint
         self._impl = implementation_info()
         self._caches: dict[int, FeatureCache] = {}
 
@@ -226,7 +236,8 @@ class FeatureCacheManager:
         if cache is None:
             cache = FeatureCache(self.base_root, self.cfg, sr,
                                  cache_mode=self.cache_mode,
-                                 shard_size=self.shard_size, impl=self._impl)
+                                 shard_size=self.shard_size, impl=self._impl,
+                                 view_fingerprint=self.view_fingerprint)
             self._caches[sr] = cache
         return cache
 

@@ -83,6 +83,13 @@ from .data.windows import (
 )
 from .reporting.dataset_report import build_report
 from .reporting.job_report import write_inspection
+from .modeling.experiment import (
+    ExperimentConfigError,
+    load_experiment,
+    set_override,
+)
+from .modeling.features import FeatureLoadError
+from .modeling.trainer import RunError, load_run_data, run_experiment
 from .features.cache import FeatureCacheManager
 from .features.mfcc import (
     FeatureConfigError,
@@ -92,7 +99,7 @@ from .features.mfcc import (
     normalize_feature_config,
 )
 
-NOT_IMPLEMENTED = ("run", "sweep", "cache", "train", "summarize", "dashboard")
+NOT_IMPLEMENTED = ("sweep", "cache", "train", "summarize", "dashboard")
 
 
 def _now_iso() -> str:
@@ -381,6 +388,51 @@ def cmd_split(args) -> int:
     return 0
 
 
+def cmd_run(args) -> int:
+    """D6: train the frozen-feature MLP and write a self-contained result pack."""
+    paths = load_paths(args.paths)
+    repo_root = Path(args.repo_root).resolve() if args.repo_root else Path.cwd()
+    workspace = Path(paths["workspace_root"])
+    try:
+        cfg = load_experiment(args.config)
+        for assignment in args.set or []:
+            set_override(cfg, assignment)
+        if args.device:
+            cfg["training"]["device"] = args.device
+        print(f"[run] experiment={cfg['experiment_id']} dataset={cfg['dataset']} "
+              f"prepared={cfg['prepared_id']} split={cfg['split_id']}")
+        if args.dry_run:
+            data = load_run_data(cfg, workspace, repo_root)
+            merged = data["merged"]
+            print(f"[run] DRY-RUN: samples={len(merged)} "
+                  f"subjects={merged['group_id'].nunique()} "
+                  f"feature_dim={data['X'].shape[1]} "
+                  f"sample_rate={data['sample_rate']} "
+                  f"cache={data['cache_info']['feature_key']}")
+            for split in ("train", "val", "test"):
+                part = merged[merged["split"] == split]
+                print(f"[run]   {split:5s}: samples={len(part):6d} "
+                      f"subjects={part['group_id'].nunique():3d} "
+                      f"labels={part['label'].value_counts().to_dict()}")
+            print("[run] DRY-RUN: config, data and feature cache are valid; nothing trained.")
+            return 0
+        job = run_experiment(cfg, workspace, repo_root)
+    except (ExperimentConfigError, FeatureLoadError, RunError) as e:
+        raise ConfigError(str(e)) from e
+
+    print(f"[run] completed: {job['run_id']}")
+    print(f"[run] output dir: {job['out_dir']}")
+    print(f"[run] best epoch={job['best_epoch']} "
+          f"val_subject_bacc={job['best_val_subject_balanced_accuracy']:.3f}")
+    test_m = job["metrics"]["test"]["subject"]
+    print(f"[run] test subject: n={test_m['n']} "
+          f"bacc={test_m['balanced_accuracy']} "
+          f"sens={test_m['sensitivity']} spec={test_m['specificity']} "
+          f"auroc={test_m['auroc']}")
+    print(f"[run] report: {job['outputs']['report']}")
+    return 0
+
+
 def cmd_inspect_file(args) -> int:
     paths = load_paths(args.paths)
     root = dataset_root(paths, args.dataset)
@@ -646,7 +698,8 @@ def cmd_extract_features(args) -> int:
             cache_root = job_dir / "cache" / "features" / "mfcc_stats"
         else:
             cache_root = Path(paths["workspace_root"]) / "cache" / "features" / "mfcc_stats"
-        manager = FeatureCacheManager(cache_root, feat_cfg, cache_mode=args.cache_mode)
+        manager = FeatureCacheManager(cache_root, feat_cfg, cache_mode=args.cache_mode,
+                                      view_fingerprint=cfg_fp)
         print(f"[extract-features] feature cache ({args.cache_mode}): {cache_root}")
 
     feature_counts = Counter({"n_cached": 0, "n_new": 0, "n_failed": 0})
@@ -872,6 +925,19 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--paths", required=True)
     sp.add_argument("--repo-root", default=None)
     sp.set_defaults(func=cmd_split)
+
+    sp = sub.add_parser(
+        "run",
+        help="train the frozen-feature MLP and write a reproducible result pack")
+    sp.add_argument("--config", required=True, help="experiment config yaml")
+    sp.add_argument("--set", action="append", metavar="KEY=VALUE",
+                    help="dot-key override, e.g. model.dropout=0.3 (repeatable)")
+    sp.add_argument("--device", default=None, help="override training.device (cpu/cuda)")
+    sp.add_argument("--dry-run", action="store_true",
+                    help="validate config/data/features; do not train")
+    sp.add_argument("--paths", required=True)
+    sp.add_argument("--repo-root", default=None)
+    sp.set_defaults(func=cmd_run)
 
     sp = sub.add_parser(
         "prepare",

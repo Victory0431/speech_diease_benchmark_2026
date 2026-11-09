@@ -175,8 +175,13 @@ def resolve_f_max(cfg: dict, sample_rate: int) -> float:
     return f_max
 
 
-def feature_hash(cfg: dict, sample_rate: int, impl: dict | None = None) -> str:
-    """Hash of formula + implementation + actual-Hz geometry (not the source file)."""
+def feature_hash(cfg: dict, sample_rate: int, impl: dict | None = None,
+                 view_fingerprint: str | None = None) -> str:
+    """Hash of formula + implementation + actual-Hz geometry + view semantics.
+
+    `view_fingerprint` identifies the preprocessing/crop recipe, so two features
+    computed over different observation windows can never share a cache key.
+    """
     impl = impl or implementation_info()
     geometry = frontend_geometry(sample_rate, float(cfg["frame_ms"]), float(cfg["hop_ms"]))
     payload = {
@@ -190,13 +195,16 @@ def feature_hash(cfg: dict, sample_rate: int, impl: dict | None = None) -> str:
         "stats": list(cfg["stats"]),
         "std_ddof": int(cfg["std_ddof"]),
     }
+    if view_fingerprint:
+        payload["view_fingerprint"] = str(view_fingerprint)
     blob = json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str,
                       separators=(",", ":"))
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
-def feature_key(cfg: dict, sample_rate: int) -> str:
-    return f"{cfg['name']}_{feature_hash(cfg, sample_rate)[:16]}"
+def feature_key(cfg: dict, sample_rate: int,
+                view_fingerprint: str | None = None) -> str:
+    return f"{cfg['name']}_{feature_hash(cfg, sample_rate, view_fingerprint=view_fingerprint)[:16]}"
 
 
 def _build_transform(sample_rate: int, cfg: dict, f_hash: str):

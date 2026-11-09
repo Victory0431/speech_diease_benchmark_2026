@@ -1,0 +1,47 @@
+# UAspeech 第一条可复现基线：D3 缓存的 40 维 MFCC 统计量 + MLP
+# 数据端参数（采样率/观察窗/位置）由 prepared_id 背后的 D2/D3 作业固定；
+# 本文件只控制"读哪个缓存、什么模型、怎么训练"。
+experiment_id: uaspeech_mfcc_mlp_baseline
+experiment_name: UAspeech MFCC20+stats -> MLP baseline
+experiment_group: baseline_v1
+purpose: 验证数据层到模型层的完整闭环，并给出第一条可追溯基线
+stage: baseline                  # exploration / baseline / confirmatory
+
+task_id: uaspeech_v1
+dataset: uaspeech
+prepared_id: 20261109T193404+0800_uaspeech_prepare
+split_id: 20261109T193524+0800_seed0_f7eb7f76
+
+features:
+  # D3 配方：20 维 MFCC，有效帧上求 mean/std(ddof=0) -> 40 维/窗口
+  config: configs/features/mfcc20_stats.yaml
+  # 观察窗语义（必须与生成缓存的作业一致）：native 16 kHz、head 4 s
+  preprocess: configs/preprocessing/uaspeech_native_4s_head.yaml
+
+model:
+  name: mlp
+  hidden_dims: [128]
+  dropout: 0.2
+  activation: relu               # 输入维度从特征缓存自动推导，不硬编码 40
+
+training:
+  seed: 0
+  epochs: 80
+  batch_size: 64
+  optimizer: adamw
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  early_stopping_patience: 10
+  selection_metric: subject_balanced_accuracy
+  selection_direction: max
+  class_weighting: subject_balanced   # 每人总权重相等；不叠加类别重加权
+  device: cpu
+
+evaluation:
+  unit: subject                  # 主评价单位
+  primary_metric: balanced_accuracy
+  binary_threshold: 0.5
+
+labels:
+  class_order: [control, disorder]
+  positive_class: disorder
