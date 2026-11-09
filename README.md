@@ -246,6 +246,8 @@ sddbench extract-features --dataset parkinson_kcl --source <KCL_SCAN_ID> \
 │   ├── experiments/           # 基线实验配置（数据 ID、划分 ID、模型、训练）
 │   └── sweeps/                # 参数网格示例
 ├── docs/
+│   ├── architecture.md        # 【模块说明书】分层、流水线、参数地图、产物与扩展点
+│   ├── roadmap.md             # D11–D14 路线：接库、网页控制台、结果看板
 │   ├── construction_plan.md   # 宏观架构与分阶段施工说明
 │   ├── data_layer_plan.md     # 数据层补充设计（UAspeech 先行）
 │   ├── datasets/uaspeech.md   # UAspeech 数据集档案与已知疑点
@@ -333,4 +335,9 @@ sddbench extract-features --dataset parkinson_kcl --source <KCL_SCAN_ID> \
 4. 接入更多数据集（D11）：每个库只需适配器 + 标签复核 + prepared/split ID，
    再复制一份实验配置；KCL 的标签复核与 ID22 命名问题在接入时综合处理。
    每个新库都要判断 `grouping`，并至少跑一次多 seed 汇总。
-5. 汇总页（D12）：把 `results_summary` 渲染成一页可浏览的 HTML/表格。
+5. 网页控制台（D12）：`sddbench serve` 后用浏览器选数据集、看配置、调数据层/模型层参数、
+   试运行、启动训练、看日志与图表；结果看板并入 D13。
+6. 长期扩展（D14）：批量实验、实验登记、回归烟测、新特征/新模型插槽。
+
+> 完整路线与验收口径见 [docs/roadmap.md](docs/roadmap.md)；
+> 模块与参数说明见 [docs/architecture.md](docs/architecture.md)。
