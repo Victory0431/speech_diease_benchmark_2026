@@ -92,12 +92,20 @@ tests/                    合成数据测试，不碰真实患者音频
 
 | 模块 | 代码文件 | 职责 |
 | --- | --- | --- |
+| 配方注册表 | `features/registry.py` | `feature_type -> Recipe`：归一化、维度、哈希、实现信息、提取函数；数据层与模型层只通过它拿特征 |
+| 前端几何 | `features/geometry.py` | 由特征配方的 `frame_ms/hop_ms` 推 `n_fft/win_length/hop_length`；预处理层不再拥有帧参数 |
 | MFCC 配方 | `features/mfcc.py` | 校验并归一化配置；用 torchaudio 在有效帧上算 MFCC 与 mean/std；记录实现版本 |
-| 缓存 | `features/cache.py` | 按 `(特征配置, 采样率, 视图指纹)` 分目录；`meta.json + index.csv + shard_*.npz`；支持增量与碰撞检测 |
+| 缓存 | `features/cache.py` | 按 `(特征类型, 特征配置, 采样率, 视图指纹)` 分目录；`meta.json + index.csv + shard_*.npz`；支持增量与碰撞检测 |
 
 - 输入：`windows.csv` 的 `window_id` 与 `view_hash`；
-- 输出：每个窗口 40 维（`n_mfcc=20` 的 mean+std）；
-- **缓存键**：特征配置哈希 + 采样率 + 预处理指纹。任何一项变化都会生成新缓存目录。
+- 输出：每个窗口 40 维（`n_mfcc=20` 的 mean+std），维度由 `registry.feature_dim(cfg)` 决定；
+- **缓存键**：特征类型 + 特征配置哈希 + 采样率 + 预处理指纹。任何一项变化都会生成新缓存目录；
+- **并行**：`extract-features --workers N` 用线程池并发"解码 → 裁剪 → 重采样 → MFCC"；
+  默认 `min(32, CPU 核数)`，同时把 `torch` 线程数设为 `CPU/workers`（上限 16），避免两层并行互相抢占。
+  请求预览图时自动退回单线程（文件名按顺序编号）。
+  冷盘实测（3000 个 UAspeech 4 s 文件）：单线程 141 s，16 线程 39 s，32 线程 38 s。
+- **维度约定**：`feature_dim(cfg)` 是唯一真值来源；训练时从缓存读出 `X.shape[1]` 再建模型，
+  配置里不硬编码维度；`run.json.features.dim` 记录实际值，供结果层核对。
 
 ### 4.4 模型层（D6–D7）
 

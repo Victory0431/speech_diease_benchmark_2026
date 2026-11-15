@@ -232,3 +232,27 @@ def test_stratified_sample_is_deterministic_and_cross_speaker():
     assert {r[COL_SPEAKER_TOKEN] for r in chosen} == {"S1", "S2", "S3"}
     assert {r[COL_DIRECTORY_GROUP] for r in chosen} == {"Disorder", "Healthy"}
     assert summary["strategy"] == "stratified_round_robin"
+
+
+def test_build_view_index_parallel_matches_serial(synth_root):
+    """Worker threads must not change rows, view hashes or issue order."""
+    scan_rows, _ = scan_files(synth_root)
+    adapter = get_adapter("uaspeech")
+    collected = adapter.collect(synth_root, {}, scan_rows)
+    rows = [dict(r, **collected.enrichment.get(r[COL_RELATIVE_PATH], {}))
+            for r in scan_rows]
+    preprocess = Path(__file__).resolve().parents[1] / "configs" / "preprocessing" / \
+        "uaspeech_native_smoke.yaml"
+    cfg = normalize_preprocess(yaml.safe_load(preprocess.read_text(encoding="utf-8")))
+
+    serial = build_view_index(synth_root, rows, cfg, source_scan_id="scan1",
+                              verify_source_hash=False, workers=1)
+    parallel = build_view_index(synth_root, rows, cfg, source_scan_id="scan1",
+                                verify_source_hash=False, workers=8)
+
+    assert [r["window_id"] for r in parallel.rows] == [r["window_id"] for r in serial.rows]
+    assert [r["view_hash"] for r in parallel.rows] == [r["view_hash"] for r in serial.rows]
+    assert parallel.counts == serial.counts
+    assert [(i["issue_type"], i["relative_path"]) for i in parallel.issues] == \
+        [(i["issue_type"], i["relative_path"]) for i in serial.issues]
+

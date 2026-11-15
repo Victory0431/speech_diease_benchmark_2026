@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 import sys
+import threading
 import time
 from collections import Counter
 from pathlib import Path
@@ -908,6 +909,16 @@ def cmd_extract_features(args) -> int:
     preview_limit = max(0, int(args.previews or 0))
     preview_dir = (job_dir / "previews") if preview_limit and not blocked else None
 
+    # One worker per logical core is counterproductive here (decode + small MFCC
+    # ops); a bounded pool hides I/O latency without flooding memory. Previews
+    # are numbered sequentially, so they force the serial path.
+    requested_workers = int(args.workers or 0)
+    if requested_workers <= 0:
+        requested_workers = min(32, os.cpu_count() or 1)
+    workers = 1 if preview_dir is not None else max(1, requested_workers)
+    print(f"[extract-features] workers={workers} (cpu={os.cpu_count()}, "
+          f"requested={args.workers or 'auto'})")
+
     compute_features = bool(feat_cfg) and not args.dry_run and not blocked
     manager = None
     if compute_features:
@@ -916,33 +927,58 @@ def cmd_extract_features(args) -> int:
                                       view_fingerprint=cfg_fp)
         print(f"[extract-features] feature cache ({args.cache_mode}): "
               f"{cache_base / 'cache' / 'features'}")
+        if workers > 1:
+            # Split the machine between workers and torch intra-op threads so the
+            # two kinds of parallelism do not oversubscribe the CPU.
+            try:
+                import torch
+                intra = max(1, min(16, (os.cpu_count() or 1) // workers))
+                torch.set_num_threads(intra)
+                try:
+                    torch.set_num_interop_threads(1)
+                except RuntimeError:
+                    pass
+                print(f"[extract-features] torch_intra_threads={intra}")
+            except ImportError:
+                pass
 
     feature_counts = Counter({"n_cached": 0, "n_new": 0, "n_failed": 0})
     feature_failures: list[dict] = []
+    cache_lock = threading.Lock()
+
+    def _fail(row, issue_type, detail):
+        with cache_lock:
+            feature_counts["n_failed"] += 1
+            feature_failures.append({
+                "issue_type": issue_type, "severity": "error",
+                "relative_path": row["relative_path"], "detail": detail})
 
     def _on_view(row, valid, processed_sr):
-        cache = manager.cache_for(processed_sr)
-        existing = cache.existing(row["window_id"])
+        # Cache lookups/writes are serialised; MFCC runs outside the lock so the
+        # pool actually parallelises the expensive part.
+        with cache_lock:
+            cache = manager.cache_for(processed_sr)
+            existing = cache.existing(row["window_id"])
         if existing is not None:
             if existing.get("view_hash") != row["view_hash"]:
-                feature_counts["n_failed"] += 1
-                feature_failures.append({
-                    "issue_type": "feature_cache_collision", "severity": "error",
-                    "relative_path": row["relative_path"],
-                    "detail": f"window_id {row['window_id']} has a different view_hash"})
-                return
-            feature_counts["n_cached"] += 1
+                _fail(row, "feature_cache_collision",
+                      f"window_id {row['window_id']} has a different view_hash")
+            else:
+                with cache_lock:
+                    feature_counts["n_cached"] += 1
             return
         try:
             result = extract(valid, processed_sr, feat_cfg, feat_impl)
-            cache.add(row["window_id"], row["sample_id"], result.vector,
-                      result.n_frames, row["view_hash"])
-            feature_counts["n_new"] += 1
         except (FeatureError, FeatureConfigError) as e:
-            feature_counts["n_failed"] += 1
-            feature_failures.append({
-                "issue_type": "feature_failed", "severity": "error",
-                "relative_path": row["relative_path"], "detail": str(e)[:500]})
+            _fail(row, "feature_failed", str(e)[:500])
+            return
+        try:
+            with cache_lock:
+                cache.add(row["window_id"], row["sample_id"], result.vector,
+                          result.n_frames, row["view_hash"])
+                feature_counts["n_new"] += 1
+        except (FeatureError, FeatureConfigError) as e:
+            _fail(row, "feature_failed", str(e)[:500])
 
     table = None
     if blocked:
@@ -966,6 +1002,7 @@ def cmd_extract_features(args) -> int:
             verify_source_hash=not args.no_verify_source_hash,
             min_valid_samples=min_valid_samples,
             on_view=_on_view if manager is not None else None,
+            workers=workers,
         )
         view_rows = table.rows
         issues = table.issues + feature_failures
@@ -1033,6 +1070,7 @@ def cmd_extract_features(args) -> int:
         "features_requested": bool(feat_cfg),
         "feature": feature_summary,
         "cache_mode": args.cache_mode,
+        "workers": workers,
         "selection": selection,
         "sample_rate_inventory": {str(k): v for k, v in sorted(sr_inventory.items())},
         "sample_rate_selected": {str(k): v for k, v in sorted(sr_selected.items())},
@@ -1235,6 +1273,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--limit", type=int, default=None,
                     help="deterministic stratified sample size (omit for all rows)")
     sp.add_argument("--cache-mode", choices=["run", "shared"], default="run")
+    sp.add_argument("--workers", type=int, default=0,
+                    help="decode/feature worker threads (0 = auto: min(32, cpu_count)); "
+                         "previews always run serially")
     sp.add_argument("--dry-run", action="store_true",
                     help="build the view index/inspection only; do not compute MFCC")
     sp.add_argument("--previews", type=int, default=6,

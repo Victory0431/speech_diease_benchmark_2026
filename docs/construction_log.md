@@ -897,3 +897,34 @@ D15 之后代码骨架稳定，但"还缺什么、下一步做什么"散落在 R
 ### 验证
 
 本次仅文档改动，未触碰代码；`python -m pytest -q` 仍为 76 passed。
+
+## D17（2026-11-15）：特征作业并行化
+
+### 问题
+
+全量特征重算 143,290 个窗口耗时 2,841 s（单线程解码 + 计算）。机器为 112 逻辑核，
+未利用；冷盘读取是主要瓶颈（3000 个 4 s 文件单线程 141 s，约 2.7 MB/s）。
+
+### 改动
+
+- `data/windows.py`：`build_view_index(..., workers=N)`，把"解码 → 通道选择 → 裁剪 →
+  重采样 → 视图哈希 → on_view（含 MFCC）"整体放进线程池；结果按输入顺序合并，
+  rows/issues/counts 与单线程完全一致（新增测试锁定）。预览图仍走单线程。
+- `cli.py`：`extract-features --workers`（0 = 自动 `min(32, cpu_count)`）；
+  同时设置 `torch.set_num_threads(max(1, min(16, cpu/workers)))`，避免线程池与
+  torch 内部并行互相抢占；`job.json` 记录 `workers`。
+- 缓存读写加锁：查重/追加串行，MFCC 计算在锁外并行。
+
+### 实测（3000 文件，先 `posix_fadvise(DONTNEED)` 清页缓存）
+
+| workers | wall | 说明 |
+| --- | --- | --- |
+| 1 | 141 s | 冷盘串行 |
+| 16 | 39 s | 3.6× |
+| 32 | 38 s | 默认 |
+
+热缓存下串行反而更快（19 s vs 25 s），但首次全量重算必然是冷盘；缓存命中时不再计算。
+
+### 验证
+
+`python -m pytest -q` → 77 passed（新增 `test_build_view_index_parallel_matches_serial`）。

@@ -20,6 +20,7 @@ import hashlib
 import json
 import math
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -271,7 +272,8 @@ def build_view_index(root: Path, records: list[dict], cfg: dict, *,
                      preview_limit: int = 0,
                      verify_source_hash: bool = True,
                      min_valid_samples: dict[int, int] | None = None,
-                     on_view=None) -> ViewTable:
+                     on_view=None,
+                     workers: int = 1) -> ViewTable:
     """Decode each selected record once and build one window row per sample.
 
     Only successfully decoded audio candidates produce windows. Files whose
@@ -283,9 +285,14 @@ def build_view_index(root: Path, records: list[dict], cfg: dict, *,
     know frame_ms/hop_ms; the caller supplies the limit, and None means "no
     feature recipe was requested, do not filter".
 
-    `on_view(row, valid_waveform, processed_sample_rate)` runs synchronously for
-    each built window (used by feature extraction) so full runs never keep all
-    waveforms in memory and never decode twice.
+    `on_view(row, valid_waveform, processed_sample_rate)` runs for each built
+    window (used by feature extraction) so full runs never keep all waveforms in
+    memory and never decode twice.
+
+    `workers > 1` decodes/crops/resamples (and calls `on_view`) in a thread pool.
+    Threads are enough because decoding and the feature backend release the GIL;
+    results are still merged in input order, so rows and issues are deterministic.
+    Requesting previews forces the serial path because preview names are numbered.
     """
     table = ViewTable()
     counts = Counter({
@@ -300,64 +307,74 @@ def build_view_index(root: Path, records: list[dict], cfg: dict, *,
         "previews_written": 0,
     })
     sr_inventory: Counter = Counter()
-    sr_selected: Counter = Counter()
-
     for rec in records:
-        rel = rec.get(COL_RELATIVE_PATH, "")
         sr_inventory[_s(rec.get(COL_SAMPLE_RATE)) or "missing"] += 1
+    sr_selected: Counter = Counter()
+    preview_state = [0]
+
+    def _build_one(rec: dict, index: int):
+        """Decode one record and build its window row.
+
+        With ``workers > 1`` this runs in a worker thread. It returns plain data
+        (row / issues / count deltas / original sample rate) so the caller can
+        merge everything deterministically in input order. ``on_view`` is
+        invoked from worker threads too, so callers must make it thread-safe.
+        """
+        issues: list[dict] = []
+        delta: Counter = Counter()
+        rel = rec.get(COL_RELATIVE_PATH, "")
         if rec.get(COL_CATEGORY) != CATEGORY_AUDIO or rec.get(COL_DECODE_STATUS) != "ok":
-            counts["skipped_not_eligible"] += 1
-            table.issues.append(_issue(
+            delta["skipped_not_eligible"] += 1
+            issues.append(_issue(
                 "source_not_eligible", "warning", rel,
                 "source row is not a successfully decoded audio candidate"))
-            continue
+            return index, None, issues, delta, None
 
         path = root / rel
         try:
             decoded = decode(path)
         except DecodeError as e:
-            counts["decode_failed"] += 1
-            table.issues.append(_issue("decode_failed", "error", rel, str(e)[:500]))
-            continue
+            delta["decode_failed"] += 1
+            issues.append(_issue("decode_failed", "error", rel, str(e)[:500]))
+            return index, None, issues, delta, None
 
         recorded_sha = _s(rec.get(COL_SHA256))
         if verify_source_hash:
             try:
                 digest = file_sha256(path)
             except OSError as e:
-                counts["decode_failed"] += 1
-                table.issues.append(_issue("hash_read_failed", "error", rel, str(e)[:300]))
-                continue
+                delta["decode_failed"] += 1
+                issues.append(_issue("hash_read_failed", "error", rel, str(e)[:300]))
+                return index, None, issues, delta, None
             if recorded_sha and digest != recorded_sha:
-                counts["hash_mismatch"] += 1
-                table.issues.append(_issue(
+                delta["hash_mismatch"] += 1
+                issues.append(_issue(
                     "source_hash_mismatch", "error", rel,
                     f"file content changed since scan {source_scan_id}; refusing this view"))
-                continue
+                return index, None, issues, delta, None
             if not recorded_sha:
-                table.issues.append(_issue(
+                issues.append(_issue(
                     "source_sha256_missing", "warning", rel,
                     "scan row has no sha256; using the freshly computed hash"))
         else:
             digest = recorded_sha
-            table.issues.append(_issue(
+            issues.append(_issue(
                 "source_hash_not_verified", "warning", rel,
                 "verify_source_hash disabled for this job"))
 
         original_sr = int(decoded.sample_rate)
-        sr_selected[original_sr] += 1
         try:
             wave, ch_info = select_channel(decoded.waveform,
                                            cfg["channel_policy"], cfg["channel_index"])
         except ViewError as e:
-            counts["channel_error"] += 1
-            table.issues.append(_issue("channel_error", "error", rel, str(e)))
-            continue
+            delta["channel_error"] += 1
+            issues.append(_issue("channel_error", "error", rel, str(e)))
+            return index, None, issues, delta, original_sr
 
         n_samples = int(wave.shape[0])
         recorded_n = rec.get(COL_N_SAMPLES)
         if not _missing(recorded_n) and int(recorded_n) != n_samples:
-            table.issues.append(_issue(
+            issues.append(_issue(
                 "sample_count_mismatch", "warning", rel,
                 f"decoded {n_samples} samples but scan recorded {recorded_n}"))
 
@@ -366,38 +383,39 @@ def build_view_index(root: Path, records: list[dict], cfg: dict, *,
         try:
             valid = crop(wave, start, end)
         except ViewError as e:
-            counts["view_error"] += 1
-            table.issues.append(_issue("crop_error", "error", rel, str(e)))
-            continue
+            delta["view_error"] += 1
+            issues.append(_issue("crop_error", "error", rel, str(e)))
+            return index, None, issues, delta, original_sr
 
         target_sr = (int(cfg["target_sample_rate"])
                      if cfg["sample_rate_policy"] == "resample" else original_sr)
         try:
             valid, resample_info = resample(valid, original_sr, target_sr)
         except ViewError as e:
-            counts["view_error"] += 1
-            table.issues.append(_issue("resample_error", "error", rel, str(e)))
-            continue
+            delta["view_error"] += 1
+            issues.append(_issue("resample_error", "error", rel, str(e)))
+            return index, None, issues, delta, original_sr
 
         k_target = sample_count(float(cfg["window_seconds"]), target_sr)
         valid_n = int(valid.shape[0])
         if valid_n > k_target:
             # only possible via resampling rounding; make it explicit
-            table.issues.append(_issue(
+            issues.append(_issue(
                 "valid_longer_than_target", "warning", rel,
                 f"valid {valid_n} > target {k_target}; trimmed after resampling"))
             valid = valid[:k_target]
             valid_n = k_target
+
         pad_n = k_target - valid_n
 
         min_valid = (min_valid_samples or {}).get(target_sr)
         if min_valid is not None and valid_n < min_valid:
-            counts["too_short_for_feature"] += 1
-            table.issues.append(_issue(
+            delta["too_short_for_feature"] += 1
+            issues.append(_issue(
                 "too_short_for_feature", "warning", rel,
                 f"valid {valid_n} samples < {min_valid} required by the feature recipe "
                 f"at {target_sr} Hz"))
-            continue
+            return index, None, issues, delta, original_sr
 
         sample_id = rel
         resolved = {
@@ -412,12 +430,13 @@ def build_view_index(root: Path, records: list[dict], cfg: dict, *,
         view_hash = compute_view_hash(cfg, sample_id, digest, resolved)
 
         preview_rel = None
-        if preview_dir is not None and counts["previews_written"] < preview_limit:
+        if preview_dir is not None and preview_state[0] < preview_limit:
             preview_dir.mkdir(parents=True, exist_ok=True)
-            name = _preview_name(counts["previews_written"], rel)
+            name = _preview_name(preview_state[0], rel)
             sf.write(str(preview_dir / name), valid, target_sr, subtype="PCM_16")
             preview_rel = str(Path(preview_dir.name) / name)
-            counts["previews_written"] += 1
+            preview_state[0] += 1
+            delta["previews_written"] += 1
 
         row = {
             "sample_id": sample_id,
@@ -458,10 +477,28 @@ def build_view_index(root: Path, records: list[dict], cfg: dict, *,
             "view_hash": view_hash,
             "preview_path": preview_rel,
         }
-        table.rows.append({c: row.get(c) for c in WINDOW_COLUMNS})
-        counts["built"] += 1
+        delta["built"] += 1
         if on_view is not None:
             on_view(row, valid, target_sr)
+        return index, {c: row.get(c) for c in WINDOW_COLUMNS}, issues, delta, original_sr
+
+    # Preview files are numbered sequentially, so previews stay on the serial path.
+    effective_workers = 1 if preview_dir is not None else max(1, int(workers))
+    if effective_workers > 1:
+        with ThreadPoolExecutor(max_workers=effective_workers) as pool:
+            outcomes = list(pool.map(lambda item: _build_one(item[1], item[0]),
+                                     enumerate(records)))
+    else:
+        outcomes = [_build_one(rec, i) for i, rec in enumerate(records)]
+
+    for _index, row, issues, delta, original_sr in outcomes:
+        counts.update(delta)
+        table.issues.extend(issues)
+        if original_sr is not None:
+            sr_selected[original_sr] += 1
+        if row is not None:
+            table.rows.append(row)
+
 
     table.counts = dict(counts)
     table.sample_rate_inventory = {str(k): v for k, v in sorted(sr_inventory.items(),
