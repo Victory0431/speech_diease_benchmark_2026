@@ -218,6 +218,14 @@ sddbench extract-features --dataset parkinson_kcl --source <KCL_SCAN_ID> \
 
 结果写入 `<workspace_root>/inventory/uaspeech/<scan_id>/`。
 
+### 想读懂代码，按这个顺序看
+
+1. [docs/architecture.md](docs/architecture.md)：分层、流水线、模块清单、参数地图、产物路径、扩展点。一页看完整体。
+2. `src/sddbench/cli.py`：每个子命令对应一个 `cmd_*` 函数，函数顺序就是流水线顺序。
+3. [docs/dataset_onboarding.md](docs/dataset_onboarding.md)：新增数据集照着做即可，不需要先读完全部数据层代码。
+4. [docs/construction_log.md](docs/construction_log.md)：每个决策"为什么这么做"（D1–D15）。
+5. 网页控制台：参数在 `src/sddbench/web/schema.py` 注册，想知道能调什么看这里。
+
 ---
 
 ## 四、仓库结构
@@ -238,8 +246,8 @@ sddbench extract-features --dataset parkinson_kcl --source <KCL_SCAN_ID> \
 │   │   ├── prepare.py         # 确定性分层抽样 + 准入前的选择规则
 │   │   ├── admission.py       # 标签复核、人员隔离、批准清单
 │   │   ├── split.py           # 人员隔离的确定性分层划分
-│   │   └── adapters/          # 数据集适配器（只解释命名/归属，不碰音频）
-│   ├── features/              # MFCC 固定配方 + 分片缓存
+│   │   └── adapters/          # 数据集适配器（只解释命名/归属，不碰音频）；label_folders 为目录名即标签
+│   ├── features/              # 特征配方注册表（feature_type/维度/哈希）+ 前端几何 + MFCC + 分片缓存
 │   ├── modeling/              # 特征读取、指标、MLP、实验配置、训练、扫描/汇总、报告
 │   ├── results/               # 结果契约、发布白名单、跨数据集 leaderboard、多 seed 聚合
 │   ├── web/                   # D12 网页控制台：schema.py、catalog.py、server.py、static/
