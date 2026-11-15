@@ -7,6 +7,7 @@
 #   - 统计量 mean/std(ddof=0)，并非"每帧归一化后拼接"。
 # 修改以上任何一项都会改变 feature_hash 与缓存目录。
 schema_version: "1.0"
+feature_type: mfcc
 name: mfcc_stats
 description: "20 MFCC + mean/std statistics on valid audio only (40 dims)"
 implementation: torchaudio

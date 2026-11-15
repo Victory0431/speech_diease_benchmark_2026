@@ -1,8 +1,9 @@
-"""Load the frozen MFCC statistics from the D3 sharded cache.
+"""Load frozen feature vectors from the feature cache.
 
 The model layer never decodes audio and never recomputes features. It reads
 `index.csv` + `shard_*.npz`, checks the feature hash and one-window-per-sample
-constraint, and returns a dense float32 matrix in manifest order.
+constraint, and returns a dense float32 matrix in manifest order. It only knows
+`feature_type`/`recipe_id`/`dim`, never a specific transform.
 """
 from __future__ import annotations
 
@@ -12,7 +13,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from ..features.mfcc import feature_hash
+from ..features.registry import feature_cache_dir, feature_hash
 
 
 class FeatureLoadError(RuntimeError):
@@ -21,9 +22,8 @@ class FeatureLoadError(RuntimeError):
 
 def cache_dir(workspace_root: Path, feature_cfg: dict, sample_rate: int,
               view_fingerprint: str | None = None) -> Path:
-    key = feature_hash(feature_cfg, sample_rate, view_fingerprint=view_fingerprint)
-    return (Path(workspace_root) / "cache" / "features" / feature_cfg["name"]
-            / f"{feature_cfg['name']}_{key[:16]}")
+    return feature_cache_dir(workspace_root, feature_cfg, sample_rate,
+                             view_fingerprint=view_fingerprint)
 
 
 def load_features(workspace_root: Path, feature_cfg: dict, sample_ids: list[str],
@@ -80,6 +80,8 @@ def load_features(workspace_root: Path, feature_cfg: dict, sample_ids: list[str]
         "cache_dir": str(directory),
         "feature_key": meta.get("feature_key"),
         "feature_hash": expected_hash,
+        "feature_type": meta.get("feature_type"),
+        "recipe_id": meta.get("recipe_id"),
         "view_fingerprint": view_fingerprint,
         "sample_rate": int(sample_rate),
         "dim": dim,

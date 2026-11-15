@@ -21,7 +21,7 @@ from torch import nn
 
 from .. import __version__
 from ..data.windows import normalize_preprocess, preprocess_fingerprint
-from ..features.mfcc import normalize_feature_config
+from ..features.registry import normalize_feature_config, recipe_id
 from ..results.contract import CONTRACT_VERSION, validate_metrics
 from .experiment import config_hash
 from .features import load_features
@@ -146,6 +146,7 @@ def load_run_data(cfg: dict, workspace: Path, repo_root: Path) -> dict:
         "class_order": class_order, "positive_class": positive,
         "positive_index": class_order.index(positive),
         "sample_rate": sample_rate, "feature_cfg": feature_cfg,
+        "preprocess_rel": preprocess_rel, "view_fingerprint": view_fingerprint,
         "grouping": grouping,
         "manifest_file": manifest_file, "split_file": split_file,
         "split_dir": split_dir,
@@ -404,6 +405,17 @@ def run_experiment(cfg: dict, workspace: Path, repo_root: Path,
             "feature_cache": data["cache_info"],
         },
         "class_order": class_order, "positive_class": data["positive_class"],
+        "features": {
+            "feature_type": data["feature_cfg"]["feature_type"],
+            "recipe_id": recipe_id(data["feature_cfg"]),
+            "feature_config": cfg["features"]["config"],
+            "preprocess_config": data["preprocess_rel"],
+            "preprocess_fingerprint": data["view_fingerprint"],
+            "feature_key": data["cache_info"].get("feature_key"),
+            "feature_hash": data["cache_info"].get("feature_hash"),
+            "sample_rate": data["sample_rate"],
+            "dim": int(X.shape[1]),
+        },
         "model": cfg["model"], "training": cfg["training"],
         "evaluation_unit": unit, "primary_unit": unit, "grouping": grouping,
         "selection_metric": selection_metric,

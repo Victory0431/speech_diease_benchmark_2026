@@ -823,3 +823,53 @@ sddbench serve --paths configs/paths.local.yaml --port 8765
   不会自动重连；
 - 无鉴权，只适合本机或受信内网；不做多用户隔离。
 
+
+---
+
+## D15（2026-11-15）：数据层审计与规整
+
+### 审计结论
+
+1. **帧几何有两个真值来源**：`preprocessing` 与 `features` 都写 `frame_ms/hop_ms`，
+   `windows.py` 用预处理的值算 `n_fft/win_length` 并写进窗口索引，`mfcc.py` 又自己算一遍。
+   两边不一致时没有任何校验。
+2. **特征身份缺失**：特征 yaml 没有 `feature_type`；`feature_key` 定义在 MFCC 模块；
+   `FeatureCache` 名字通用但 `dim = 2*n_mfcc` 写死；`run.json` 不记特征身份；
+   网页生成的配置统一叫 `features.yaml`。
+3. **UAspeech 特例被做成通用契约**：`mic`、`origin`、`naming.pattern`、
+   逐组 `label_review` 出现在所有数据集模板与准入流程里；`stats` 无条件要求 adapter，
+   新数据集不写 Python 类就无法统计。
+4. **文档混层**：`fixture`（测试术语）与 `mic` 决策混进数据契约，读者误以为是数据字段。
+
+### 本次改动
+
+- 新增 `features/registry.py`：`feature_type -> Recipe(normalize/dim/hash/impl/extract)`；
+  缓存前缀、索引列、`run.json`、模型输入维度全部从注册表取值。
+- `feature_type` 改为必填；缓存路径统一为 `cache/features/<feature_type>_<hash16>/`；
+  索引列用 `feature_type/recipe_id/dim` 取代 `n_mfcc`。
+- 帧几何移回特征层：预处理配置出现 `frame_ms/hop_ms/n_fft/win_length/hop_length` 直接报错；
+  窗口索引不再写这 5 个字段；`min_valid_samples` 由调用方按特征配方传入。
+- `run.json` 新增 `features` 段（type / recipe / key / hash / dim / 预处理指纹）。
+- 新增 `label_folders` adapter 与目录名标签准入：`layout: label_folders` +
+  `grouping: file` + 可选 `label_map`，不需要复核 CSV，`label_source=directory:<folder>`；
+  未映射文件夹阻塞而不是猜标签。
+- 网页参数表删掉预处理层的 `frame_ms/hop_ms`；生成文件名改为 `features_<recipe>.yaml`。
+- 新增 `docs/dataset_onboarding.md`（层职责、两条接入通道、术语表、失败处理）。
+
+### 兼容性
+
+- 旧缓存 `artifacts/cache/features/mfcc_stats/` 是历史布局，新代码不再读取；
+  需要时重新执行 `extract-features` 即可（确定性重算）。
+- 旧的实验配置若引用 `frame_ms/hop_ms` 的预处理 yaml，会明确报错并提示迁移位置。
+
+### 验证
+
+```bash
+python -m pytest -q        # 76 passed
+```
+
+新增测试：
+- `tests/test_feature_identity.py`：预处理拒绝帧几何、`feature_type` 必填、
+  缓存 key/dim/meta/index 的身份字段；
+- `tests/test_label_folders.py`：两个标签文件夹从 `stats` 到 `prepare` 全程无复核 CSV，
+  以及未映射文件夹阻塞。

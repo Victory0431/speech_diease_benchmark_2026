@@ -61,11 +61,6 @@ SECTIONS = [
             _f("preprocess.short_policy", "不足长度处理", "select", "right_zero_pad",
                impact="windows", options=["right_zero_pad"],
                help="当前只实现了右侧补零。"),
-            _f("preprocess.frame_ms", "帧长 (ms)", "float", 25.0,
-               impact="windows", minimum=5.0, maximum=100.0, step=1.0,
-               help="用于计算窗口索引的 n_fft。"),
-            _f("preprocess.hop_ms", "帧移 (ms)", "float", 10.0,
-               impact="windows", minimum=1.0, maximum=50.0, step=1.0),
             _f("preprocess.amplitude_normalization", "幅度归一化", "select", "none",
                impact="windows", options=["none"],
                help="当前锁定为 none，避免引入未评审的增益策略。"),
@@ -327,6 +322,7 @@ def build_configs(repo_root: Path, dataset_id: str, dataset_cfg: dict,
         preprocess["window_seconds"] = clean["preprocess.window_seconds"]
 
     task_id = str(dataset_cfg.get("task_id") or f"{dataset_id}_v1")
+    feature_file = _feature_filename(features)
     experiment = {
         "experiment_id": experiment_id,
         "experiment_name": f"{dataset_id} web console",
@@ -338,7 +334,7 @@ def build_configs(repo_root: Path, dataset_id: str, dataset_cfg: dict,
         "prepared_id": prepared_id,
         "split_id": split_id,
         "features": {
-            "config": f"configs/experiments/generated/{experiment_id}/features.yaml",
+            "config": f"configs/experiments/generated/{experiment_id}/{feature_file}",
             "preprocess":
                 f"configs/experiments/generated/{experiment_id}/preprocess.yaml",
         },
@@ -375,6 +371,12 @@ def build_configs(repo_root: Path, dataset_id: str, dataset_cfg: dict,
     return experiment, preprocess, features
 
 
+def _feature_filename(features: dict) -> str:
+    """Recipe name in the filename so MFCC vs log-mel is visible at a glance."""
+    label = str(features.get("name") or features.get("feature_type") or "feature")
+    return f"features_{label}.yaml"
+
+
 def write_configs(repo_root: Path, experiment: dict, preprocess: dict,
                   features: dict) -> dict:
     out_dir = repo_root / "configs" / "experiments" / "generated" / experiment["experiment_id"]
@@ -382,7 +384,7 @@ def write_configs(repo_root: Path, experiment: dict, preprocess: dict,
     paths = {
         "experiment": out_dir / "experiment.yaml",
         "preprocess": out_dir / "preprocess.yaml",
-        "features": out_dir / "features.yaml",
+        "features": out_dir / _feature_filename(features),
     }
     for name, doc in (("experiment", experiment), ("preprocess", preprocess),
                       ("features", features)):

@@ -69,6 +69,7 @@ from .data.admission import (
     build_manifest,
     load_label_review,
     manifest_fingerprint,
+    review_from_label_folders,
     review_inventory,
     review_status_rows,
     select_rows,
@@ -76,6 +77,7 @@ from .data.admission import (
     write_review_template,
 )
 from .reporting.admission_report import render_admission
+from .features.geometry import frontend_geometry
 from .data.windows import (
     WINDOW_COLUMNS,
     PreprocessConfigError,
@@ -97,15 +99,17 @@ from .results.contract import ResultsContractError
 from .results.aggregate import aggregate_runs
 from .results.publish import publish_all
 from .features.cache import FeatureCacheManager
-from .features.mfcc import (
+from .features.mfcc import FeatureError
+from .features.registry import (
     FeatureConfigError,
-    FeatureError,
-    extract_mfcc,
+    extract,
+    feature_dim,
     implementation_info,
     normalize_feature_config,
+    recipe_id,
 )
 
-NOT_IMPLEMENTED = ("cache", "train", "dashboard")
+NOT_IMPLEMENTED = ("cache", "train")
 
 
 def _now_iso() -> str:
@@ -207,31 +211,62 @@ def cmd_prepare(args) -> int:
           f"grouping={grouping} eligible={len(eligible_rows(all_rows))} "
           f"groups={len(inventory)}")
 
-    review_rel = (task_cfg.get("label_review") or {}).get(
-        "file", f"label_review/{args.dataset}_label_review.csv")
-    review_path = (Path(args.review).expanduser() if args.review
-                   else Path(paths["workspace_root"]) / str(review_rel))
-    review_path = review_path.resolve()
+    layout = str(task_cfg.get("layout") or "rich")
+    is_folders = layout == "label_folders"
+    if is_folders and grouping != "file":
+        raise ConfigError(f"task {task_id}: layout=label_folders requires grouping=file")
+    if is_folders and args.write_review_template:
+        raise ConfigError("layout=label_folders needs no review template; "
+                          "labels come from folder names")
 
-    if args.write_review_template:
+    if is_folders:
+        review_rel = ""
+        review_path = Path("<directory>")
+        review_exists = True
+        review, map_issues = review_from_label_folders(
+            inventory, task_cfg.get("label_map"))
+        print(f"[prepare] layout=label_folders folders={len(review)} "
+              f"labels={sorted({r['confirmed_label'] for r in review.values()})}")
+    else:
+        review_rel = (task_cfg.get("label_review") or {}).get(
+            "file", f"label_review/{args.dataset}_label_review.csv")
+        review_path = (Path(args.review).expanduser() if args.review
+                       else Path(paths["workspace_root"]) / str(review_rel))
+        review_path = review_path.resolve()
+
+        if args.write_review_template:
+            try:
+                write_review_template(review_path, inventory, force=args.force)
+            except AdmissionError as e:
+                raise ConfigError(str(e)) from e
+            print(f"[prepare] wrote pending review template: {review_path}")
+
+        review_exists = review_path.is_file()
         try:
-            write_review_template(review_path, inventory, force=args.force)
+            review = load_label_review(review_path)
         except AdmissionError as e:
             raise ConfigError(str(e)) from e
-        print(f"[prepare] wrote pending review template: {review_path}")
-
-    review_exists = review_path.is_file()
-    try:
-        review = load_label_review(review_path)
-    except AdmissionError as e:
-        raise ConfigError(str(e)) from e
 
     selected, select_issues, select_blockers = select_rows(all_rows, selection)
     selected_inventory = review_inventory(selected, grouping=grouping)
     check = validate_review(review, selected_inventory, grouping=grouping)
 
-    blockers: list[dict] = list(select_issues)
-    if not review_exists:
+    if not is_folders:
+        map_issues = []
+    blockers: list[dict] = list(map_issues) + list(select_issues)
+    if is_folders:
+        if map_issues:
+            status = STATUS_LABEL_REVIEW_INCOMPLETE
+        elif check["missing"] or check["unconfirmed"] or check["incomplete"]:
+            status = STATUS_LABEL_REVIEW_INCOMPLETE
+            blockers = check["blocking"] + blockers
+        elif STATUS_NO_ROWS in select_blockers:
+            status = STATUS_NO_ROWS
+        elif STATUS_ORIGIN_DUPLICATE in select_blockers:
+            status = STATUS_ORIGIN_DUPLICATE
+        else:
+            status = STATUS_APPROVED
+    elif not review_exists:
         status = STATUS_LABEL_REVIEW_MISSING
         blockers.insert(0, {
             "issue_type": "label_review_missing", "severity": "error", "relative_path": "",
@@ -257,7 +292,8 @@ def cmd_prepare(args) -> int:
     if status == STATUS_APPROVED:
         manifest, manifest_issues = build_manifest(
             selected, check["confirmed"], args.dataset, review_path, selection,
-            grouping=grouping)
+            grouping=grouping,
+            label_source_prefix="directory" if is_folders else None)
         errors = [i for i in manifest_issues if i.get("severity") == "error"]
         if errors:
             status = STATUS_ORIGIN_CONFLICT
@@ -296,6 +332,7 @@ def cmd_prepare(args) -> int:
         "dataset_root": str(root), "scan_id": args.source,
         "scan_dir": str(scan_dir), "out_dir": str(out_dir),
         "status": status, "selection": selection, "grouping": grouping,
+        "layout": layout,
         "review_path": str(review_path), "review_exists": review_exists,
         "review": {
             "n_inventory": len(inventory),
@@ -331,8 +368,10 @@ def cmd_prepare(args) -> int:
     provenance = {
         "dataset_id": args.dataset, "task_id": task_id,
         "scan_id": args.source, "scan_meta": str(meta_file),
-        "dataset_root": str(root), "review_file": str(review_path),
-        "review_sha256": (file_sha256(review_path) if review_exists else None),
+        "dataset_root": str(root),
+        "review_file": ("<label folders>" if is_folders else str(review_path)),
+        "review_sha256": (None if is_folders
+                          else (file_sha256(review_path) if review_exists else None)),
         "selection": selection, "generated_at": _now_iso(),
         "tool_version": __version__, "status": status,
     }
@@ -567,6 +606,34 @@ def cmd_aggregate(args) -> int:
     return 0
 
 
+def cmd_describe(args) -> int:
+    """D12: print the web console parameter schema (machine-readable)."""
+    from .web.schema import get_schema
+
+    print(json.dumps(get_schema(), ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_catalog(args) -> int:
+    """D12: print the dataset/run catalog the web console reads."""
+    from .web.catalog import build_catalog
+
+    paths = load_paths(args.paths)
+    repo_root = Path(args.repo_root).resolve() if args.repo_root else Path.cwd()
+    print(json.dumps(build_catalog(repo_root, paths["workspace_root"]),
+                     ensure_ascii=False, indent=2, default=str))
+    return 0
+
+
+def cmd_serve(args) -> int:
+    """D12: local web console (stdlib HTTP server, bind 127.0.0.1 by default)."""
+    from .web.server import serve
+
+    repo_root = Path(args.repo_root).resolve() if args.repo_root else Path.cwd()
+    serve(repo_root, args.paths, args.host, args.port)
+    return 0
+
+
 def cmd_inspect_file(args) -> int:
     paths = load_paths(args.paths)
     root = dataset_root(paths, args.dataset)
@@ -627,7 +694,8 @@ def cmd_stats(args) -> int:
     rows, scan_issues = scan_files(root)
     print(f"[stats] discovered {len(rows)} files ({time.time() - t0:.1f}s)")
 
-    adapter = get_adapter(task_cfg.get("adapter", args.dataset))
+    adapter_key = task_cfg.get("adapter") or task_cfg.get("layout") or args.dataset
+    adapter = get_adapter(adapter_key)
     adapter_result = adapter.collect(root, task_cfg, rows)
     index = {r[COL_RELATIVE_PATH]: r for r in rows}
     for rel, fields in adapter_result.enrichment.items():
@@ -761,7 +829,7 @@ def cmd_extract_features(args) -> int:
         feat_cfg["name"] = str(fraw.get("name") or Path(args.features).stem)
         feat_cfg["description"] = str(fraw.get("description") or "")
         try:
-            feat_impl = implementation_info()
+            feat_impl = implementation_info(feat_cfg)
         except FeatureConfigError as e:
             raise ConfigError(str(e)) from e
 
@@ -810,6 +878,21 @@ def cmd_extract_features(args) -> int:
     blocked = (cfg["sample_rate_policy"] == "native"
                and not cfg["allow_mixed_native"] and mixed)
 
+    # Frame geometry belongs to the feature recipe; the view layer only receives
+    # the resulting minimum waveform length and never stores win/hop/n_fft.
+    min_valid_samples = None
+    frontend_by_sr: dict[str, dict] = {}
+    if feat_cfg:
+        target_rates = set(sr_inventory) | set(sr_selected)
+        if cfg["sample_rate_policy"] == "resample" and cfg["target_sample_rate"]:
+            target_rates.add(int(cfg["target_sample_rate"]))
+        for sr in sorted(r for r in target_rates if r):
+            geom = frontend_geometry(int(sr), float(feat_cfg["frame_ms"]),
+                                     float(feat_cfg["hop_ms"]))
+            min_valid_samples = min_valid_samples or {}
+            min_valid_samples[int(sr)] = geom.min_valid_samples
+            frontend_by_sr[str(sr)] = geom.as_dict()
+
     cfg_fp = preprocess_fingerprint(cfg)
     base_job_id = (f"{_stamp()}_{args.dataset}_views_{cfg['position']}_"
                    f"{float(cfg['observe_seconds']):g}s_{cfg_fp[:8]}")
@@ -828,13 +911,11 @@ def cmd_extract_features(args) -> int:
     compute_features = bool(feat_cfg) and not args.dry_run and not blocked
     manager = None
     if compute_features:
-        if args.cache_mode == "run":
-            cache_root = job_dir / "cache" / "features" / "mfcc_stats"
-        else:
-            cache_root = Path(paths["workspace_root"]) / "cache" / "features" / "mfcc_stats"
-        manager = FeatureCacheManager(cache_root, feat_cfg, cache_mode=args.cache_mode,
+        cache_base = job_dir if args.cache_mode == "run" else Path(paths["workspace_root"])
+        manager = FeatureCacheManager(cache_base, feat_cfg, cache_mode=args.cache_mode,
                                       view_fingerprint=cfg_fp)
-        print(f"[extract-features] feature cache ({args.cache_mode}): {cache_root}")
+        print(f"[extract-features] feature cache ({args.cache_mode}): "
+              f"{cache_base / 'cache' / 'features'}")
 
     feature_counts = Counter({"n_cached": 0, "n_new": 0, "n_failed": 0})
     feature_failures: list[dict] = []
@@ -853,7 +934,7 @@ def cmd_extract_features(args) -> int:
             feature_counts["n_cached"] += 1
             return
         try:
-            result = extract_mfcc(valid, processed_sr, feat_cfg, feat_impl)
+            result = extract(valid, processed_sr, feat_cfg, feat_impl)
             cache.add(row["window_id"], row["sample_id"], result.vector,
                       result.n_frames, row["view_hash"])
             feature_counts["n_new"] += 1
@@ -876,7 +957,6 @@ def cmd_extract_features(args) -> int:
                       f"allow_mixed_native=false",
         }]
         counts = {"requested": len(chosen), "built": 0, "blocked": True}
-        frontend = {}
     else:
         table = build_view_index(
             root, chosen, cfg,
@@ -884,12 +964,12 @@ def cmd_extract_features(args) -> int:
             preview_dir=preview_dir,
             preview_limit=preview_limit,
             verify_source_hash=not args.no_verify_source_hash,
+            min_valid_samples=min_valid_samples,
             on_view=_on_view if manager is not None else None,
         )
         view_rows = table.rows
         issues = table.issues + feature_failures
         counts = table.counts
-        frontend = table.frontend_by_sample_rate
         print(f"[extract-features] windows built={counts['built']}/{counts['requested']} "
               f"({time.time() - t0:.1f}s)")
         if manager is not None:
@@ -898,12 +978,17 @@ def cmd_extract_features(args) -> int:
 
     feature_summary = None
     if feat_cfg:
-        dim = 2 * int(feat_cfg["n_mfcc"])
+        dim = feature_dim(feat_cfg)
+        identity = {
+            "feature_type": feat_cfg["feature_type"],
+            "recipe_id": recipe_id(feat_cfg),
+            "dim": dim,
+        }
         if manager is not None:
             finalized = manager.finalize()
             feature_summary = {
                 "config": feat_cfg,
-                "dim": dim,
+                **identity,
                 "cache_mode": args.cache_mode,
                 "n_new": feature_counts["n_new"],
                 "n_from_cache": feature_counts["n_cached"],
@@ -915,7 +1000,7 @@ def cmd_extract_features(args) -> int:
             }
         else:
             feature_summary = {
-                "config": feat_cfg, "dim": dim, "cache_mode": args.cache_mode,
+                "config": feat_cfg, **identity, "cache_mode": args.cache_mode,
                 "n_new": 0, "n_from_cache": 0, "n_failed": 0, "n_items": 0,
                 "caches": [], "planned": True,
                 "note": "dry-run/blocked: features were not computed",
@@ -942,6 +1027,7 @@ def cmd_extract_features(args) -> int:
                    "files_csv": str(files_csv)},
         "technical_only": True,
         "admission": (scan_meta.get("task_config") or {}).get("admission", "pending_review"),
+        "layout": (scan_meta.get("task_config") or {}).get("layout", "rich"),
         "preprocess": cfg,
         "preprocess_fingerprint": cfg_fp,
         "features_requested": bool(feat_cfg),
@@ -950,7 +1036,7 @@ def cmd_extract_features(args) -> int:
         "selection": selection,
         "sample_rate_inventory": {str(k): v for k, v in sorted(sr_inventory.items())},
         "sample_rate_selected": {str(k): v for k, v in sorted(sr_selected.items())},
-        "frontend_by_sample_rate": frontend,
+        "frontend_by_sample_rate": frontend_by_sr,
         "counts": counts,
         "status": status,
         "dry_run": bool(args.dry_run),
@@ -961,7 +1047,8 @@ def cmd_extract_features(args) -> int:
             "inspection_md": str(job_dir / "inspection.md"),
             "config_yaml": str(job_dir / "config.yaml"),
             "previews_dir": str(preview_dir) if preview_dir else None,
-            "cache_root": (str(manager.base_root) if manager is not None else None),
+            "cache_root": (str(manager.base_root / "cache" / "features")
+                           if manager is not None else None),
             "cache_dirs": ([c["cache_dir"] for c in (feature_summary or {}).get("caches", [])]
                            if feature_summary else []),
         },
@@ -1005,7 +1092,7 @@ def cmd_extract_features(args) -> int:
         return 4
     if manager is None:
         print("[extract-features] next: review inspection.md and previews, then pass "
-              "--features configs/features/mfcc20_stats.yaml to compute MFCC (D3).")
+              "--features configs/features/mfcc20_stats.yaml to compute the feature cache.")
     return 0
 
 
@@ -1157,6 +1244,27 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--paths", required=True)
     sp.add_argument("--repo-root", default=None)
     sp.set_defaults(func=cmd_extract_features)
+
+    sp = sub.add_parser(
+        "describe",
+        help="print the D12 web-console parameter schema as JSON")
+    sp.set_defaults(func=cmd_describe)
+
+    sp = sub.add_parser(
+        "catalog",
+        help="print datasets, prepared jobs, splits, runs and results as JSON")
+    sp.add_argument("--paths", required=True)
+    sp.add_argument("--repo-root", default=None)
+    sp.set_defaults(func=cmd_catalog)
+
+    sp = sub.add_parser(
+        "serve",
+        help="start the local web console (default http://127.0.0.1:8765)")
+    sp.add_argument("--paths", required=True)
+    sp.add_argument("--host", default="127.0.0.1")
+    sp.add_argument("--port", type=int, default=8765)
+    sp.add_argument("--repo-root", default=None)
+    sp.set_defaults(func=cmd_serve)
 
     for name in NOT_IMPLEMENTED:
         sp = sub.add_parser(name, help=f"[not implemented yet] planned {name} command")

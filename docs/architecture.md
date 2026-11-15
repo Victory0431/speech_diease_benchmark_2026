@@ -20,17 +20,17 @@
 ```
 configs/                  所有可调参数的入口（YAML）
   paths.example.yaml      路径绑定模板（真实路径写在 paths.local.yaml，不入库）
-  datasets/               数据任务定义：adapter、grouping、标签映射、麦克风选择
-  preprocessing/          观察窗语义：采样率、通道、时长、位置、补零策略
-  features/               MFCC 配方：n_mfcc、n_mels、帧长、统计量
+  datasets/               数据任务定义：layout、标签来源、grouping
+  preprocessing/          音频视图：采样率、通道、时长、位置、补零策略
+  features/               特征配方：feature_type、帧几何、n_mfcc/n_mels、统计量
   experiments/            一次实验：读哪个 prepared/split、模型结构、训练超参
   sweeps/                 参数网格
 
 src/sddbench/
   config.py               路径解析、workspace 子目录约定
   data/                   D1–D5：扫描、审计、统计、准入、划分
-    adapters/             数据集适配器（uaspeech / parkinson_kcl）
-  features/               D3：MFCC 计算与分片缓存
+    adapters/             数据集适配器（label_folders / uaspeech / parkinson_kcl）
+  features/               D3：特征配方注册表、计算与分片缓存
   modeling/               D6–D7：特征装载、MLP、训练、指标、报告、sweep
   results/                D8–D9：结果契约、归档与榜单、多 seed 聚合
   reporting/              各类 Markdown 报告渲染
@@ -49,8 +49,8 @@ tests/                    合成数据测试，不碰真实患者音频
 | 0 路径绑定 | 编辑 `configs/paths.local.yaml` | 数据根、workspace 根 | 无 | 数据根必须显式 |
 | 1 扫描与统计 | `stats --mode full` | 原始数据根 | `inventory/<dataset>/<scan_id>/` | 无（纯事实） |
 | 2 观察窗 | `extract-features --dry-run` | 扫描 + 预处理配置 | `feature_jobs/<job_id>/windows.csv` | 采样率、通道、4 s、head/tail |
-| 3 特征缓存 | `extract-features --features ...` | 窗口索引 + MFCC 配置 | `cache/features/mfcc_stats/<sr>/` | n_mfcc、n_mels、帧长、统计量 |
-| 4 标签准入 | `prepare` | 扫描 + 标签复核 CSV + `grouping` | `prepared/<task_id>/<job_id>/manifest.csv` | 标签、麦克风、是否按人隔离 |
+| 3 特征缓存 | `extract-features --features ...` | 窗口索引 + 特征配方 | `cache/features/<type>_<hash>/` | feature_type、帧长、n_mfcc/n_mels、统计量 |
+| 4 标签准入 | `prepare` | 扫描 + 标签来源（目录名或复核 CSV） | `prepared/<task_id>/<job_id>/manifest.csv` | 标签、隔离单位 |
 | 5 划分 | `split --seed N` | manifest | `splits/<task_id>/<split_id>/split.csv` | 比例、seed、隔离单位 |
 | 6 训练 | `run --config ...` | 缓存 + 划分 + 实验配置 | `runs/<run_id>/` | 模型、超参、评价单位 |
 | 7 网格/汇总 | `sweep` / `summarize` | 实验配置 + sweep 配置 | 多个 run + `summary.csv` | 扫哪些参数 |
@@ -186,13 +186,16 @@ tests/                    合成数据测试，不碰真实患者音频
 | `observe_seconds` / `window_seconds` | 观察长度 | 当前必须相等 |
 | `position` | 取头部/尾部/随机 | `head` / `tail` / `random`（随机需 `crop_seed`） |
 | `short_policy` | 不足长度怎么办 | 仅 `right_zero_pad` |
-| `frame_ms` / `hop_ms` | 窗口与步长 | 正数 |
 | `amplitude_normalization` | 幅度归一化 | 当前仅 `none` |
+
+帧长/帧移/`n_fft` **不属于预处理**，写在特征配方里；预处理配置写了会被拒绝。
 
 ### 5.3 特征 `configs/features/*.yaml`
 
 | 参数 | 作用 | 当前约束 |
 | --- | --- | --- |
+| `feature_type` | 特征类型（mfcc / 后续 logmel） | 必填，决定缓存前缀与维度 |
+| `name` | 配方名（人读） | 记录到 run.json |
 | `n_mfcc` | MFCC 维数 | 正整数，≤ `n_mels` |
 | `n_mels` | Mel 滤波器数 | 正整数 |
 | `frame_ms` / `hop_ms` | 帧长/帧移 | 正数；`n_fft` 自动取 2 的幂 |
@@ -227,7 +230,7 @@ artifacts/
     meta.json  files.csv  statistics.json  issues.csv  report.md  figures/
   feature_jobs/<job_id>/
     config.yaml  feature_config.yaml  windows.csv  issues.csv  inspection.md
-    previews/  cache/features/mfcc_stats/<sample_rate>/
+    previews/  cache/features/<feature_type>_<hash>/
   prepared/<task_id>/<job_id>/
     manifest.csv  admission.json  admission.md  label_review_status.csv
     issues.csv  task.yaml  provenance.json

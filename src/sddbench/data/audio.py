@@ -16,7 +16,6 @@ the view (data-layer doc §7-§8):
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
 
 import numpy as np
 
@@ -159,54 +158,3 @@ def pad_right(waveform: np.ndarray, target_num_samples: int) -> tuple[np.ndarray
     if pad == 0:
         return np.ascontiguousarray(waveform, dtype=np.float32), 0
     return np.pad(waveform, (0, pad)), pad
-
-
-@dataclass
-class FrontendGeometry:
-    """Millisecond-defined analysis geometry for one actual sample rate."""
-    sample_rate: int
-    frame_ms: float
-    hop_ms: float
-    win_length: int
-    hop_length: int
-    n_fft: int
-
-    @property
-    def min_valid_samples(self) -> int:
-        # center=false MFCC needs at least one full analysis window.
-        return self.n_fft
-
-    def as_dict(self) -> dict:
-        return {
-            "sample_rate": self.sample_rate,
-            "frame_ms": self.frame_ms,
-            "hop_ms": self.hop_ms,
-            "win_length": self.win_length,
-            "hop_length": self.hop_length,
-            "n_fft": self.n_fft,
-            "min_valid_samples": self.min_valid_samples,
-        }
-
-
-def next_power_of_two(n: int) -> int:
-    if n < 1:
-        raise ViewError(f"next_power_of_two expects a positive integer, got {n!r}")
-    return 1 << (int(n) - 1).bit_length()
-
-
-def frontend_geometry(sample_rate: int, frame_ms: float = 25.0,
-                      hop_ms: float = 10.0) -> FrontendGeometry:
-    """Derive win/hop/n_fft from milliseconds at the actual sample rate.
-
-    Never reuse 16 kHz numbers for a 44.1 kHz waveform (data-layer doc §7.2).
-    """
-    win = max(1, round_half_up(frame_ms / 1000.0 * sample_rate))
-    hop = max(1, round_half_up(hop_ms / 1000.0 * sample_rate))
-    return FrontendGeometry(
-        sample_rate=int(sample_rate),
-        frame_ms=float(frame_ms),
-        hop_ms=float(hop_ms),
-        win_length=win,
-        hop_length=hop,
-        n_fft=next_power_of_two(win),
-    )

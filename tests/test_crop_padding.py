@@ -51,8 +51,6 @@ def _cfg(**over):
         "crop_seed": 0,
         "short_policy": "right_zero_pad",
         "amplitude_normalization": "none",
-        "frame_ms": 25.0,
-        "hop_ms": 10.0,
     }
     base.update(over)
     return normalize_preprocess(base)

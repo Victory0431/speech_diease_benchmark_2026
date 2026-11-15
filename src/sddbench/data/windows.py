@@ -27,14 +27,12 @@ import numpy as np
 import soundfile as sf
 
 from .audio import (
-    FrontendGeometry,
     RESAMPLE_IMPLEMENTATION,
     RESAMPLE_METHOD,
     RESAMPLE_PARAMS,
     RESAMPLE_VERSION,
     ViewError,
     crop,
-    frontend_geometry,
     pad_right,
     resample,
     sample_count,
@@ -60,8 +58,6 @@ from .schema import (
 
 CROP_ALGORITHM_VERSION = "1.0"
 POSITIONS = ("head", "center", "tail", "fixed_random")
-DEFAULT_FRAME_MS = 25.0
-DEFAULT_HOP_MS = 10.0
 
 WINDOW_COLUMNS = [
     "sample_id", "window_id", "relative_path", "source_scan_id",
@@ -76,7 +72,6 @@ WINDOW_COLUMNS = [
     "position", "seed", "rng_seed_used", "crop_algorithm_version",
     "channel_policy", "channel_index", "n_channels",
     "resample_applied", "resample_info",
-    "win_length", "hop_length", "n_fft", "frame_ms", "hop_ms",
     "view_hash", "preview_path",
 ]
 
@@ -95,8 +90,6 @@ PREPROCESS_DEFAULTS = {
     "crop_seed": 0,
     "short_policy": "right_zero_pad",
     "amplitude_normalization": "none",
-    "frame_ms": DEFAULT_FRAME_MS,
-    "hop_ms": DEFAULT_HOP_MS,
     "crop_algorithm_version": CROP_ALGORITHM_VERSION,
 }
 
@@ -106,8 +99,20 @@ class PreprocessConfigError(ValueError):
 
 
 def normalize_preprocess(raw: dict) -> dict:
-    """Validate + fill defaults; refuse semantics this stage does not implement."""
-    cfg = {**PREPROCESS_DEFAULTS, **dict(raw or {})}
+    """Validate + fill defaults; refuse semantics this stage does not implement.
+
+    Frame geometry (frame_ms/hop_ms/n_fft) belongs to the feature recipe, not
+    here: the same audio view must be reusable by MFCC, log-mel, or any later
+    feature type. Writing it here is rejected instead of silently ignored.
+    """
+    raw = dict(raw or {})
+    misplaced = [k for k in ("frame_ms", "hop_ms", "n_fft", "win_length", "hop_length")
+                 if k in raw]
+    if misplaced:
+        raise PreprocessConfigError(
+            f"{misplaced} belong to the feature recipe (configs/features/*.yaml), "
+            "not to preprocessing; remove them from the preprocessing config")
+    cfg = {**PREPROCESS_DEFAULTS, **raw}
     if cfg["window_seconds"] is None:
         cfg["window_seconds"] = cfg["observe_seconds"]
 
@@ -155,10 +160,6 @@ def normalize_preprocess(raw: dict) -> dict:
             f"{cfg['amplitude_normalization']!r}")
     if not isinstance(cfg["crop_seed"], int):
         raise PreprocessConfigError(f"crop_seed must be an integer, got {cfg['crop_seed']!r}")
-    for key in ("frame_ms", "hop_ms"):
-        v = cfg[key]
-        if not isinstance(v, (int, float)) or v <= 0:
-            raise PreprocessConfigError(f"{key} must be a positive number, got {v!r}")
     cfg["profile"] = str(cfg["profile"])
     cfg["crop_algorithm_version"] = str(cfg["crop_algorithm_version"])
     return cfg
@@ -244,7 +245,6 @@ class ViewTable:
     counts: dict = field(default_factory=dict)
     sample_rate_inventory: dict = field(default_factory=dict)
     sample_rate_selected: dict = field(default_factory=dict)
-    frontend_by_sample_rate: dict = field(default_factory=dict)
 
 
 def _issue(issue_type: str, severity: str, relative_path: str, detail: str) -> dict:
@@ -270,6 +270,7 @@ def build_view_index(root: Path, records: list[dict], cfg: dict, *,
                      preview_dir: Path | None = None,
                      preview_limit: int = 0,
                      verify_source_hash: bool = True,
+                     min_valid_samples: dict[int, int] | None = None,
                      on_view=None) -> ViewTable:
     """Decode each selected record once and build one window row per sample.
 
@@ -277,8 +278,13 @@ def build_view_index(root: Path, records: list[dict], cfg: dict, *,
     content hash differs from the D1 scan are refused (not silently reused),
     which couples every view to the statistics it was derived from.
 
+    `min_valid_samples` maps a processed sample rate to the smallest waveform the
+    chosen feature recipe can transform (e.g. n_fft). The view layer does not
+    know frame_ms/hop_ms; the caller supplies the limit, and None means "no
+    feature recipe was requested, do not filter".
+
     `on_view(row, valid_waveform, processed_sample_rate)` runs synchronously for
-    each built window (used by MFCC extraction) so full runs never keep all
+    each built window (used by feature extraction) so full runs never keep all
     waveforms in memory and never decode twice.
     """
     table = ViewTable()
@@ -290,12 +296,11 @@ def build_view_index(root: Path, records: list[dict], cfg: dict, *,
         "hash_mismatch": 0,
         "channel_error": 0,
         "view_error": 0,
-        "too_short_for_frontend": 0,
+        "too_short_for_feature": 0,
         "previews_written": 0,
     })
     sr_inventory: Counter = Counter()
     sr_selected: Counter = Counter()
-    geometry_cache: dict[int, FrontendGeometry] = {}
 
     for rec in records:
         rel = rec.get(COL_RELATIVE_PATH, "")
@@ -385,17 +390,13 @@ def build_view_index(root: Path, records: list[dict], cfg: dict, *,
             valid_n = k_target
         pad_n = k_target - valid_n
 
-        geom_fe = geometry_cache.get(target_sr)
-        if geom_fe is None:
-            geom_fe = frontend_geometry(target_sr, float(cfg["frame_ms"]), float(cfg["hop_ms"]))
-            geometry_cache[target_sr] = geom_fe
-
-        if valid_n < geom_fe.min_valid_samples:
-            counts["too_short_for_frontend"] += 1
+        min_valid = (min_valid_samples or {}).get(target_sr)
+        if min_valid is not None and valid_n < min_valid:
+            counts["too_short_for_feature"] += 1
             table.issues.append(_issue(
-                "too_short_for_frontend", "warning", rel,
-                f"valid {valid_n} samples < min {geom_fe.min_valid_samples} "
-                f"(n_fft at {target_sr} Hz)"))
+                "too_short_for_feature", "warning", rel,
+                f"valid {valid_n} samples < {min_valid} required by the feature recipe "
+                f"at {target_sr} Hz"))
             continue
 
         sample_id = rel
@@ -407,7 +408,6 @@ def build_view_index(root: Path, records: list[dict], cfg: dict, *,
             "pad_num_samples": pad_n,
             "channel": ch_info,
             "resample": resample_info,
-            "frontend": geom_fe.as_dict(),
         }
         view_hash = compute_view_hash(cfg, sample_id, digest, resolved)
 
@@ -455,11 +455,6 @@ def build_view_index(root: Path, records: list[dict], cfg: dict, *,
             "n_channels": ch_info["n_channels"],
             "resample_applied": bool(resample_info["applied"]),
             "resample_info": json.dumps(resample_info, sort_keys=True),
-            "win_length": geom_fe.win_length,
-            "hop_length": geom_fe.hop_length,
-            "n_fft": geom_fe.n_fft,
-            "frame_ms": geom_fe.frame_ms,
-            "hop_ms": geom_fe.hop_ms,
             "view_hash": view_hash,
             "preview_path": preview_rel,
         }
@@ -473,5 +468,4 @@ def build_view_index(root: Path, records: list[dict], cfg: dict, *,
                                                                 key=lambda kv: str(kv[0]))}
     table.sample_rate_selected = {str(k): v for k, v in sorted(sr_selected.items(),
                                                                key=lambda kv: str(kv[0]))}
-    table.frontend_by_sample_rate = {str(sr): g.as_dict() for sr, g in sorted(geometry_cache.items())}
     return table

@@ -63,7 +63,7 @@ def render_inspection(job: dict) -> str:
         f"- 数据集：`{job['dataset_id']}`｜源扫描：`{job['source']['scan_id']}`"
         f"（{job['source']['mode']}）｜状态：**{job['status']}**",
         f"- 技术验证：`technical_only={str(job.get('technical_only')).lower()}`；"
-        f"标签状态：**未核验（pending）**，本作业不产生训练标签。",
+        f"标签来源：`{job.get('layout', 'rich')}`。",
         f"- 预处理配置：`{pre.get('name', '(inline)')}`｜profile：`{pre.get('profile')}`｜"
         f"fingerprint：`{job.get('preprocess_fingerprint', '')[:16]}…`",
         f"- 采样率策略：`{pre['sample_rate_policy']}`"
@@ -88,7 +88,7 @@ def render_inspection(job: dict) -> str:
         "",
         f"- 源清单分布：{job.get('sample_rate_inventory')}",
         f"- 本次选中分布：{job.get('sample_rate_selected')}",
-        f"- 实际前端几何：{job.get('frontend_by_sample_rate')}",
+        f"- 特征前端几何（由特征配方决定）：{job.get('frontend_by_sample_rate') or '未请求特征'}",
         "",
         "## 4. 窗口索引（坐标均为原始采样点换算，补零不伪造静音）",
         "",
@@ -115,12 +115,12 @@ def render_inspection(job: dict) -> str:
     fs = job.get("feature")
     section = 6
     if fs:
-        lines += ["", f"## {section}. MFCC 特征（仅有效声音帧）", ""]
         fcfg = fs.get("config") or {}
-        lines += [
-            f"- 配方：`{fcfg.get('name', 'mfcc_stats')}`｜n_mfcc={fcfg.get('n_mfcc')}"
-            f"｜n_mels={fcfg.get('n_mels')}｜stats=mean+std(ddof={fcfg.get('std_ddof')})"
-            f"｜log_mels=true(eps={fcfg.get('log_epsilon')})",
+        lines += ["", f"## {section}. 特征：{fs.get('feature_type')} / {fs.get('recipe_id')}", "",
+                  f"- 配方：`{fs.get('recipe_id')}`｜type=`{fs.get('feature_type')}`"
+                  f"｜n_mfcc={fcfg.get('n_mfcc')}"
+                  f"｜n_mels={fcfg.get('n_mels')}｜stats=mean+std(ddof={fcfg.get('std_ddof')})"
+                  f"｜log_mels=true(eps={fcfg.get('log_epsilon')})",
             f"- 输出维度：{fs.get('dim')}｜cache_mode：`{fs.get('cache_mode')}`"
             f"｜新增 {fs.get('n_new')} 条｜命中缓存 {fs.get('n_from_cache')} 条"
             f"｜失败 {fs.get('n_failed')} 条",
@@ -129,7 +129,7 @@ def render_inspection(job: dict) -> str:
             lines.append(f"- 缓存：`{c['cache_dir']}`｜{c['sample_rate']} Hz｜dim={c['dim']}"
                          f"｜{c['n_items']} 条 / {c['n_shards']} 个分片"
                          f"｜feature_hash=`{c['feature_hash'][:16]}…`")
-        lines.append("- 补零段不进入 MFCC 统计；`n_frames` 仅按有效声音推导。")
+        lines.append("- 补零段不进入特征统计；`n_frames` 仅按有效声音推导。")
         section += 1
     lines += [
         "",
@@ -142,9 +142,12 @@ def render_inspection(job: dict) -> str:
         f"## {section + 1}. 边界与下一步",
         "",
         "- 补零只改变张量容纳长度；有效样本数 `valid_num_samples` 与补零数分开记录。",
-        "- `too_short_for_frontend` 的样本被排除并记录，未私改帧长。",
-        "- 标签全部为 `pending`（目录名不是确认标签）；进入正式训练前必须先完成 D4 准入。",
-        f"- 下一步：{'先完成 D4 标签复核/准入，再导出训练清单' if fs else '用相同 view_hash 计算 MFCC 统计量；改位置/长度/采样率会使 view_hash 变化'}。",
+        "- `too_short_for_feature` 的样本被排除并记录，未私改特征帧几何。",
+        ("- 标签来自目录名，`prepare` 会直接确认（label_source=directory）。"
+         if job.get("layout") == "label_folders" else
+         "- 标签全部为 `pending`（目录名/token 不是确认标签）；训练前必须先完成准入。"),
+        f"- 下一步：{'先完成标签准入/导出训练清单' if job.get('layout') == 'label_folders' else '先完成标签复核/准入，再导出训练清单'}；"
+        "计算特征时用相同 view_hash 复用缓存，改位置/长度/采样率会使 view_hash 变化。",
         "",
     ]
     return "\n".join(lines) + "\n"

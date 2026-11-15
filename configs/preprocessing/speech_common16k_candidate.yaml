@@ -19,6 +19,4 @@ position: head
 crop_seed: 0
 short_policy: right_zero_pad
 amplitude_normalization: none
-frame_ms: 25.0
-hop_ms: 10.0
 crop_algorithm_version: "1.0"

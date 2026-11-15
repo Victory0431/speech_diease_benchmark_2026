@@ -41,11 +41,11 @@ def _workspace(tmp_path: Path) -> tuple[Path, Path, Path]:
         "channel_policy": "select", "channel_index": 0, "view_mode": "single_segment",
         "observe_seconds": 4.0, "window_seconds": 4.0, "position": "head",
         "crop_seed": 0, "short_policy": "right_zero_pad",
-        "amplitude_normalization": "none", "frame_ms": 25.0, "hop_ms": 10.0,
+        "amplitude_normalization": "none",
     }), encoding="utf-8")
     (repo / "configs" / "features" / "mfcc20.yaml").write_text(yaml.safe_dump({
-        "name": "mfcc", "n_mfcc": 20, "n_mels": 64, "frame_ms": 25.0,
-        "hop_ms": 10.0, "f_min_hz": 0.0, "f_max_policy": "nyquist",
+        "feature_type": "mfcc", "name": "mfcc", "n_mfcc": 20, "n_mels": 64,
+        "frame_ms": 25.0, "hop_ms": 10.0, "f_min_hz": 0.0, "f_max_policy": "nyquist",
         "stats": ["mean", "std"], "std_ddof": 0,
     }), encoding="utf-8")
     (repo / "configs" / "experiments" / "demo.yaml").write_text(yaml.safe_dump({

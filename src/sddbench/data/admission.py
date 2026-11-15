@@ -300,9 +300,50 @@ def select_rows(rows: list[dict], selection: dict) -> tuple[list[dict], list[dic
 
 # ---------------------------------------------------------------- manifest
 
+def review_from_label_folders(inventory: list[dict], label_map: dict | None = None,
+                              ) -> tuple[dict, list[dict]]:
+    """Confirmed review rows derived from folder names, no CSV involved.
+
+    `label_map` translates folder names to the benchmark label vocabulary. When
+    it is omitted the folder name itself (lower-cased) is the label, which keeps
+    `Healthy/` + `Disorder/` usable with zero configuration. A mapping that is
+    present but does not cover an observed folder is an error, never a guess.
+    """
+    label_map = {str(k): str(v) for k, v in (label_map or {}).items()}
+    lowered = {k.lower(): v for k, v in label_map.items()}
+    review: dict = {}
+    issues: list[dict] = []
+    for item in inventory:
+        group = _s(item.get(COL_DIRECTORY_GROUP))
+        key = (_s(item.get(COL_SPEAKER_TOKEN)), group)
+        if not group:
+            issues.append(_issue(
+                "label_folder_missing", "error", "",
+                "file sits outside any label folder; move it under <root>/<label>/"))
+            continue
+        if label_map:
+            label = label_map.get(group) or lowered.get(group.lower())
+            if not label:
+                issues.append(_issue(
+                    "label_folder_unmapped", "error", group,
+                    f"folder {group!r} is not covered by label_map; add it explicitly"))
+                continue
+        else:
+            label = group.strip().lower()
+        review[key] = {
+            "review_status": REVIEW_CONFIRMED,
+            "confirmed_label": label,
+            "confirmed_subject_id": "",
+            "evidence": f"directory:{group}",
+            "_line": "",
+        }
+    return review, issues
+
+
 def build_manifest(rows: list[dict], review: dict, dataset_id: str,
                    review_path: Path, selection: dict,
-                   grouping: str = GROUPING_SUBJECT) -> tuple[list[dict], list[dict]]:
+                   grouping: str = GROUPING_SUBJECT,
+                   label_source_prefix: str | None = None) -> tuple[list[dict], list[dict]]:
     """Attach confirmed labels and group ids.
 
     ``grouping="subject"`` isolates people; ``grouping="file"`` treats each
@@ -351,7 +392,10 @@ def build_manifest(rows: list[dict], review: dict, dataset_id: str,
             COL_CHANNELS: row.get(COL_CHANNELS),
             COL_SHA256: _s(row.get(COL_SHA256)),
             "official_split": "",
-            "label_source": f"{review_path.name}#line{entry.get('_line', '')}",
+            "label_source": (
+                f"{label_source_prefix}:{_s(row.get(COL_DIRECTORY_GROUP))}"
+                if label_source_prefix
+                else f"{review_path.name}#line{entry.get('_line', '')}"),
         })
 
     # Final isolation check across the built manifest.

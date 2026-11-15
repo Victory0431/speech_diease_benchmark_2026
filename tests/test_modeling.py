@@ -100,7 +100,7 @@ def _build_workspace(tmp_path: Path, *, leak: bool = False) -> tuple[Path, Path,
         "channel_policy": "select", "channel_index": 0, "view_mode": "single_segment",
         "observe_seconds": 4.0, "window_seconds": 4.0, "position": "head",
         "crop_seed": 0, "short_policy": "right_zero_pad",
-        "amplitude_normalization": "none", "frame_ms": 25.0, "hop_ms": 10.0,
+        "amplitude_normalization": "none",
         "crop_algorithm_version": "1.0",
     }
     (repo / "configs" / "preprocessing" / "demo.yaml").write_text(
@@ -141,8 +141,7 @@ def _build_workspace(tmp_path: Path, *, leak: bool = False) -> tuple[Path, Path,
     feature_cfg = normalize_feature_config(feature_raw)
     preprocess_cfg = normalize_preprocess(preprocess_raw)
     view_fp = preprocess_fingerprint(preprocess_cfg)
-    cache = FeatureCache(workspace / "cache" / "features" / "mfcc_stats",
-                         feature_cfg, 16000, cache_mode="shared",
+    cache = FeatureCache(workspace, feature_cfg, 16000, cache_mode="shared",
                          view_fingerprint=view_fp)
     for row in rows:
         label_shift = 3.0 if row["label"] == "disorder" else 0.0
@@ -194,6 +193,10 @@ def test_end_to_end_run_writes_result_pack(tmp_path):
                  "report.md"):
         assert (out / name).is_file(), name
     assert (out / "figures" / "confusion_test.png").is_file()
+    run_record = json.loads((out / "run.json").read_text(encoding="utf-8"))
+    assert run_record["features"]["feature_type"] == "mfcc"
+    assert run_record["features"]["dim"] == 40
+    assert run_record["features"]["feature_key"].startswith("mfcc_")
     metrics = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
     assert metrics["evaluation_unit"] == "subject"
     assert metrics["class_order"] == ["control", "disorder"]

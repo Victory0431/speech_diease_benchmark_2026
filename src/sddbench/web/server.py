@@ -25,6 +25,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 from ..config import ConfigError, load_paths
+from ..features.registry import feature_dim
 from .catalog import build_catalog, find_dataset
 from .schema import build_configs, get_schema, write_configs
 
@@ -199,7 +200,7 @@ class AppState:
             "experiment_id": experiment_id,
             "paths": paths,
             "config": experiment,
-            "feature_dim": 2 * int(features["n_mfcc"]),
+            "feature_dim": feature_dim(features),
             "primary_unit": experiment["evaluation"]["unit"],
             "prepared": {
                 "n_samples": (prepared.get("counts") or {}).get("n_manifest"),

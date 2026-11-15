@@ -15,7 +15,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from ..data.audio import frontend_geometry
+from .geometry import frontend_geometry
 
 FEATURE_IMPLEMENTATION = "torchaudio.transforms.MFCC"
 FEATURE_IMPLEMENTATION_VERSION = "1.0"
@@ -24,6 +24,7 @@ LOG_APPLIED_TO = "mel_power"
 
 FEATURE_DEFAULTS = {
     "schema_version": "1.0",
+    "feature_type": "mfcc",
     "name": "mfcc_stats",
     "implementation": "torchaudio",
     "n_mfcc": 20,
@@ -77,6 +78,9 @@ def _close(a, b, tol=1e-12) -> bool:
 
 def normalize_feature_config(raw: dict) -> dict:
     cfg = {**FEATURE_DEFAULTS, **dict(raw or {})}
+    if cfg["feature_type"] != "mfcc":
+        raise FeatureConfigError(
+            f"mfcc recipe needs feature_type=mfcc, got {cfg['feature_type']!r}")
     if cfg["implementation"] != "torchaudio":
         raise FeatureConfigError(
             f"implementation must be torchaudio, got {cfg['implementation']!r}")
@@ -202,9 +206,15 @@ def feature_hash(cfg: dict, sample_rate: int, impl: dict | None = None,
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
+def dim(cfg: dict) -> int:
+    """One vector per window: mean + std of every MFCC coefficient."""
+    return 2 * int(cfg["n_mfcc"])
+
+
 def feature_key(cfg: dict, sample_rate: int,
                 view_fingerprint: str | None = None) -> str:
-    return f"{cfg['name']}_{feature_hash(cfg, sample_rate, view_fingerprint=view_fingerprint)[:16]}"
+    return (f"{cfg['feature_type']}_"
+            f"{feature_hash(cfg, sample_rate, view_fingerprint=view_fingerprint)[:16]}")
 
 
 def _build_transform(sample_rate: int, cfg: dict, f_hash: str):

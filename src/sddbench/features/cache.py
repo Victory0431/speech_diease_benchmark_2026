@@ -1,12 +1,12 @@
 """Sharded, resumable feature cache (meta / index.csv / shard_*.npz).
 
-Layout for one feature key:
-  <base>/<feature_key>/meta.json
-  <base>/<feature_key>/index.csv
-  <base>/<feature_key>/shard_000.npz   (window_ids[N], x[N,dim])
+Layout for one feature key (type + recipe hash + view fingerprint):
+  <base>/cache/features/<feature_key>/meta.json
+  <base>/cache/features/<feature_key>/index.csv
+  <base>/cache/features/<feature_key>/shard_000.npz   (window_ids[N], x[N,dim])
 
 Reuse is keyed by (window_id, view_hash, feature_hash). A changed crop/Hz gives a
-different window_id/view_hash; a changed MFCC recipe gives a different
+different window_id/view_hash; a changed feature recipe gives a different
 feature_key. Deleting the directory is a supported way to force recomputation.
 """
 from __future__ import annotations
@@ -19,11 +19,19 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .mfcc import FeatureConfigError, feature_hash, feature_key, implementation_info
+from .registry import (
+    FeatureConfigError,
+    feature_cache_dir,
+    feature_dim,
+    feature_hash,
+    feature_key,
+    implementation_info,
+    recipe_id,
+)
 
 INDEX_COLUMNS = [
     "window_id", "sample_id", "shard_file", "row_index", "valid_frames",
-    "view_hash", "feature_hash", "n_mfcc", "dim",
+    "view_hash", "feature_type", "recipe_id", "feature_hash", "dim",
 ]
 _MAX_SHARD_ROWS = 2048
 
@@ -40,7 +48,7 @@ class FeatureCache:
                  impl: dict | None = None, view_fingerprint: str | None = None):
         self.cfg = cfg
         self.sample_rate = int(sample_rate)
-        self.impl = impl or implementation_info()
+        self.impl = impl or implementation_info(cfg)
         self.cache_mode = cache_mode
         self.shard_size = int(shard_size)
         self.view_fingerprint = view_fingerprint
@@ -49,18 +57,24 @@ class FeatureCache:
         self.feature_hash = feature_hash(cfg, self.sample_rate, self.impl,
                                          view_fingerprint)
         self.feature_key = feature_key(cfg, self.sample_rate, view_fingerprint)
-        self.path = Path(base_root) / self.feature_key
+        self.recipe_id = recipe_id(cfg)
+        self.path = feature_cache_dir(base_root, cfg, self.sample_rate,
+                                      view_fingerprint=view_fingerprint)
         self.path.mkdir(parents=True, exist_ok=True)
         self.meta_path = self.path / "meta.json"
         self.index_path = self.path / "index.csv"
 
-        self.dim = 2 * int(cfg["n_mfcc"])
+        self.dim = feature_dim(cfg)
         self._meta = self._load_meta()
         self._index_rows = self._load_index()
         self._existing = {r["window_id"]: r for r in self._index_rows}
         self._new_rows: list[dict] = []
         self._buffer: list[tuple[str, str, np.ndarray, int, str]] = []
         self._next_shard = self._detect_next_shard()
+        if not self._index_rows and self._next_shard > 0:
+            raise FeatureConfigError(
+                f"cache {self.path} has shard files but no index.csv (interrupted run); "
+                "delete this directory to recompute instead of appending duplicates")
         self._created_at = self._meta.get("created_at") or _now()
         if not self._meta:
             self._write_meta("initialized")
@@ -94,7 +108,6 @@ class FeatureCache:
         for r in rows:
             r["row_index"] = int(r["row_index"])
             r["valid_frames"] = int(r["valid_frames"])
-            r["n_mfcc"] = int(r["n_mfcc"])
             r["dim"] = int(r["dim"])
         return rows
 
@@ -112,16 +125,15 @@ class FeatureCache:
             "schema_version": "1.0",
             "feature_key": self.feature_key,
             "feature_hash": self.feature_hash,
+            "feature_type": self.cfg["feature_type"],
+            "recipe_id": self.recipe_id,
             "status": status,
             "cache_mode": self.cache_mode,
             "view_fingerprint": self.view_fingerprint,
             "feature_config": self.cfg,
             "implementation": self.impl,
             "sample_rate": self.sample_rate,
-            "n_mfcc": int(self.cfg["n_mfcc"]),
             "dim": self.dim,
-            "stats": list(self.cfg["stats"]),
-            "std_ddof": int(self.cfg["std_ddof"]),
             "shard_size": self.shard_size,
             "n_items": len(self._existing) + len(self._new_rows),
             "n_shards": self._next_shard,
@@ -180,8 +192,10 @@ class FeatureCache:
                 "window_id": window_id, "sample_id": sample_id,
                 "shard_file": shard_name, "row_index": row_index,
                 "valid_frames": frames, "view_hash": view_hash,
+                "feature_type": self.cfg["feature_type"],
+                "recipe_id": self.recipe_id,
                 "feature_hash": self.feature_hash,
-                "n_mfcc": int(self.cfg["n_mfcc"]), "dim": self.dim,
+                "dim": self.dim,
             })
         self._next_shard += 1
         self._buffer = []
@@ -205,6 +219,8 @@ class FeatureCache:
         return {
             "feature_key": self.feature_key,
             "feature_hash": self.feature_hash,
+            "feature_type": self.cfg["feature_type"],
+            "recipe_id": self.recipe_id,
             "cache_dir": str(self.path),
             "cache_mode": self.cache_mode,
             "view_fingerprint": self.view_fingerprint,
@@ -227,7 +243,7 @@ class FeatureCacheManager:
         self.cache_mode = cache_mode
         self.shard_size = shard_size
         self.view_fingerprint = view_fingerprint
-        self._impl = implementation_info()
+        self._impl = implementation_info(cfg)
         self._caches: dict[int, FeatureCache] = {}
 
     def cache_for(self, sample_rate: int) -> FeatureCache:

@@ -180,7 +180,7 @@ def test_cli_computes_features_and_reuses_cache(scan_workspace, tmp_path, monkey
     index1 = pd.read_csv(cache_dir / "index.csv")
     assert index1["window_id"].is_unique and len(index1) == n_built
     inspection = (Path(job1["job_dir"]) / "inspection.md").read_text(encoding="utf-8")
-    assert "MFCC 特征" in inspection and "命中缓存" in inspection
+    assert "特征：mfcc / mfcc_stats" in inspection and "命中缓存" in inspection
 
     # second run: same source/view/feature -> full cache hit, same numbers
     assert _run_cli(workspace, paths_file, FEAT_YAML) == 0
@@ -204,7 +204,7 @@ def test_cli_computes_features_and_reuses_cache(scan_workspace, tmp_path, monkey
     assert Path(job3["outputs"]["cache_dirs"][0]) != cache_dir
 
     # deleting the cache forces recomputation
-    shutil.rmtree(workspace / "cache" / "features" / "mfcc_stats")
+    shutil.rmtree(workspace / "cache" / "features")
     assert _run_cli(workspace, paths_file, FEAT_YAML) == 0
     job4 = _latest_job(workspace)
     assert job4["feature"]["n_new"] == n_built
