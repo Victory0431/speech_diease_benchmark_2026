@@ -1,0 +1,255 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>疾病语音基准平台｜产品与代码架构规范 v0.1</title><style>
+:root{--ink:#172e37;--muted:#536971;--teal:#096b68;--bg:#f4f2eb;--line:#d9e0db;--amber:#8c5b16}*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:30px}body{margin:0;background:var(--bg);color:var(--ink);font:17px/1.85 system-ui,-apple-system,"Microsoft YaHei",sans-serif}a{color:var(--teal);text-underline-offset:4px}main{max-width:1140px;margin:auto;padding:45px 38px 90px}header{padding:38px 0 42px;border-bottom:2px solid var(--ink)}.eyebrow,.kicker{font-size:13px;letter-spacing:2px;text-transform:uppercase;color:var(--teal);font-weight:750}h1{font-size:clamp(32px,5vw,54px);line-height:1.25;letter-spacing:-1.4px;max-width:920px;margin:20px 0}h2{font-size:32px;line-height:1.4;margin:10px 0 24px}h3{font-size:23px;margin:32px 0 12px}h4{font-size:18px;margin:24px 0 8px}p{margin:12px 0}.lead{font-size:21px;max-width:900px}.muted,small{color:var(--muted)}nav{display:flex;gap:8px;flex-wrap:wrap;padding:22px 0}nav a{padding:6px 12px;border:1px solid var(--line);border-radius:25px;text-decoration:none;font-size:14px;background:white}section{padding:42px 0;border-bottom:1px solid var(--line)}.cards{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin:24px 0}.card{background:#fff;padding:23px;border:1px solid var(--line);border-radius:12px}.card strong{display:block;font-size:21px;margin:6px 0}.note,.gate,.example{padding:20px 24px;border-radius:8px;margin:24px 0}.note{background:#fff2dc;border-left:4px solid #b77f31}.gate{background:#e2eeea;border-left:4px solid var(--teal)}.example{background:#fff;border:1px solid var(--line)}.label{font-size:13px;font-weight:750;color:var(--teal)}.tablewrap{overflow-x:auto;margin:20px 0}table{border-collapse:collapse;width:100%;font-size:15px;background:white}th,td{padding:15px 16px;vertical-align:top;text-align:left;border-bottom:1px solid var(--line);min-width:120px}th{background:#e8eeea;line-height:1.5}td:first-child{font-weight:650}ul,ol{padding-left:25px}li{margin:7px 0}code{background:#e7ece8;padding:2px 5px;border-radius:3px;font-size:.9em}.formula{font:16px/1.8 ui-monospace,monospace;background:#183d45;color:white;padding:20px;border-radius:8px;overflow-wrap:anywhere}details{background:#fff;border:1px solid var(--line);border-radius:8px;padding:16px 20px;margin:15px 0}summary{cursor:pointer;font-weight:700}sup a{font-size:12px;text-decoration:none}.ref{padding:15px 0;border-bottom:1px solid var(--line);font-size:15px}.ref b{display:block}.pill{font-size:12px;background:#dfebe5;border-radius:20px;padding:3px 9px;white-space:nowrap}.checklist label{display:block;padding:10px 0;border-bottom:1px solid var(--line)}input{margin-right:10px;accent-color:var(--teal)}footer{font-size:14px;color:var(--muted);padding-top:30px}.top{position:fixed;bottom:20px;right:20px;background:var(--ink);color:#fff;padding:8px 14px;border-radius:30px;text-decoration:none;font-size:13px}.caption{font-size:14px;color:var(--muted)}@media(max-width:700px){main{padding:20px 18px 60px}.cards{grid-template-columns:1fr}h2{font-size:27px}body{font-size:16px}th,td{padding:12px;min-width:130px}.lead{font-size:19px}}@media print{body{background:white;font-size:11pt}main{max-width:none;padding:0}nav,.top,.controls{display:none}section{padding:20px 0}h2,h3{break-after:avoid}tr,.card,.gate{break-inside:avoid}a{color:inherit}.tablewrap{overflow:visible}table{font-size:9pt}th,td{min-width:0;padding:8px}details{break-inside:auto}header{padding:0 0 20px}}
+
+pre{background:#15333e;color:#f0f7f4;padding:20px;border-radius:9px;overflow:auto;font:13px/1.65 ui-monospace,monospace;tab-size:2}pre code{background:none;padding:0;color:inherit}.schema{font-size:14px}.flow{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin:25px 0}.flow div{padding:16px;background:#e5eee7;border-radius:9px}.flow strong{display:block}.flow small{display:block;font-size:12px}.pill{white-space:normal}.warn{color:#9a3e19;font-weight:bold}.ticket{border-left:4px solid var(--teal);padding:15px 20px;background:white;margin:18px 0}.ticket h3{margin:0 0 10px}.wide{min-width:850px}.fine{font-size:14px}@media(max-width:750px){.flow{grid-template-columns:1fr}.flow div{padding:12px}}</style></head><body id="top"><main><header><div class="eyebrow">秦嘉宏 · sddbench v0.1 产品与架构规范 · 2026.11.09</div><h1>新增数据集，<br>不再新增一套训练和评测脚本。</h1><p class="lead">差异化数据适配 → 标准任务与音频视图 → 可配置模型 → 固定结果包。</p><p>这份文档直接定义模块边界、数据schema、函数接口、配置组合、执行顺序、指标公式、目录、错误码和验收工单。先用父级目录中的两个真实库实现Demo，再逐步扩到其他可靠数据。</p><p class="muted">这是待实施设计，不是已经搭建的平台。范围与架构细节以本版为当前建议，补充前两份研究指南；正式参数和标签在本地审计后锁定。</p></header><nav><a href="#scope">范围与决策</a><a href="#evidence">附件发现</a><a href="#map">五模块</a><a href="#contracts">数据契约</a><a href="#adapters">适配器</a><a href="#compile">任务与划分</a><a href="#views">Hz/时长/位置</a><a href="#models">模型</a><a href="#config">配置与扫参</a><a href="#runner">调用顺序</a><a href="#metrics">指标</a><a href="#outputs">产物</a><a href="#cli">命令</a><a href="#repo">目录/错误码</a><a href="#acceptance">验收</a><a href="#handoff">Codex工单</a><a href="#research">实验</a><a href="#inventory">46目录</a><a href="#refs">来源</a></nav><section id="scope"><div class="kicker">01 · 先给两个问题明确答案</div><h2>论文主线聚焦人类语音；平台可以扩展多种声音。</h2><p class="lead">建议现在锁定：<strong>主轨道为说话声、持续元音、DDK等构音发声任务；咳嗽/呼吸另设扩展轨道；心肺听诊音暂不进入主论文基准榜。</strong>平台接口保留声音类型字段，日后支持听诊音不需重写训练/评价框架，但其任务协议必须另注册。</p><div class="tablewrap"><table><thead><tr><th>范围</th><th>包含什么</th><th>本阶段怎么处理</th><th>为什么</th></tr></thead><tbody><tr><td>speech_core</td><td>朗读、单词、命令词、访谈/描述、持续元音、DDK</td><td>优先做完整基准与后两块研究</td><td>与你的“疾病语音”主线一致，输入与生理产生过程相对接近；也仍需按任务分层。</td></tr><tr><td>respiratory_extension</td><td>从口鼻采集的咳嗽和呼吸声；Coswara中语音部分可另进主轨道</td><td>先存元数据与Adapter扩展点，不作为当前施工前提</td><td>模型与患者标签仍可评测，但与语言/认知任务的信息机制不同，额外需领域基线。</td></tr><tr><td>auscultation_extension</td><td>胸壁心音/肺音，如ICBHI、KAUH</td><td>不进speech_core；以后有资源再开独立套件</td><td>声音通道、频带、事件分段和评价单位不同，混榜难解释。</td></tr><tr><td>exclude_main</td><td>家禽、临床模拟人、只有特征表/代码的记录</td><td>保留资产台账，不进入原音频患者主榜</td><td>不是说明它们没价值，而是不支撑当前主结论。</td></tr></tbody></table></div><p>“MLP或CNN听不了听诊音”不是正确理由：它们可以针对数值特征/时频图训练分类器，是否有效需实验。应向评审解释的是<strong>研究范围、输入适配与证据边界</strong>，而不是把一种架构理解为天生只会听人说话。不同数据集各自训练相同结构，和训练一个共享模型识别全部声音，也是两种完全不同的实验。</p><p>OPERA已有呼吸声学的领域基准，可作为以后扩展的参照；这说明扩展可行，不代表现在必须把所有声音都纳入。<sup><a href="#ref-opera">[R4]</a></sup>只聚焦语音并不妨碍多疾病，PD、抑郁、认知障碍、构音与嗓音任务已经覆盖不同目标。</p><div class="gate"><strong>今天可以开始：</strong>用现有原始目录中的EATD和Parkinson_KCL_2017做两个Adapter，先跑同一个MLP＋统一指标闭环。MDVR朗读子目录已清楚，比继续等未在服务器发现的SVD更贴近现实。EasyCall为第三个适配候选。</div></section><section id="evidence"><div class="kicker">02 · 新附件改变了哪些判断</div><h2>这是一份文件结构快照，还不是最终数据审计。</h2><p>本轮完整解析了服务器HTML中的46个原始目录卡片、27个整理目录卡片，并读取审查XLSX的67条记录。正文只以父级<code>dataset</code>作为<strong>本轮主要数据入口</strong>；整理目录仅用于发现旧映射风险，不将其与父级相加。</p><p>服务器报告称：父级46目录、389,084个被识别音频文件，30目录检出音频、16未检出；整理侧27目录、421,547个音频。<strong>这是报告声称的扫描数，不是本次重新访问服务器实测，也不是独立人数或独立原始录音数。</strong></p><div class="tablewrap"><table><thead><tr><th>附件里的具体信号</th><th>应怎样解释</th><th>这次产品要增加什么</th></tr></thead><tbody><tr><td>EATD：原972文件/162“标签”，每人员目录6个文件；fresh485</td><td>162是人员目录组，不是162个疾病类别；原始与_out版本同时存在。162×3=486是完整三任务单版本的预期核对数，不是已确认有效数。</td><td>区分directory_group_count与target_class_count；每人按命名配对3原始/3处理版本，记录缺失，不直接用485重命名文件。</td></tr><tr><td>Parkinson_KCL_2017：ReadText/HC21、ReadText/PD16；对话HC21，其余PD文件</td><td>朗读部分有37条文件，适合作为启动任务；37个独立人仍需核对完整ID和重复。</td><td>明确ReadText为任务筛选；同ID不同录音任务仍同组，不把任务名当疾病类别。</td></tr><tr><td>HLS_CMDS含__MACOSX和._H0001.wav等</td><td>扩展名为.wav不代表能解码；可能是macOS资源旁文件。不是1070个有效声音样本。</td><td>发现阶段列全部文件类型，解码审计排除._*、__MACOSX与无效文件并保留原因。</td></tr><tr><td>父级COUGHVID_V3/VOICED未检出音频，Coswara有压缩包</td><td>未检出支持格式 ≠ 空目录 ≠ 无原音频。WebM/容器、WFDB DAT/HEA、压缩包都可能遗漏。</td><td>每目录返回explicit状态：empty/archive_only/feature_only/unrecognized_format/decoded_audio等，不能统一叫无音频。</td></tr><tr><td>父级Spanish_logrado已出现_augmented_0及嵌套增强名</td><td>“原始目录”本身也含派生版，增强样本不能随机跨训练测试。</td><td>provenance与parent_id/augmentation标记；默认只取可追溯原件，身份不明阻止正式训练。</td></tr><tr><td>父级NCMMSC包含raw与raw_vad等；SLI含preprocess_a_data</td><td>不能把所有子目录音频数当独立录音数；预处理/裁剪可能重复来源。</td><td>representation_variant与origin_cluster；TaskSpec选择一个版本，不混原始与VAD版。</td></tr><tr><td>Respiratory_Sound_Database两个大小写目录各920</td><td>很可能重复托管，仍需哈希确认；不等于1840条独立原始录音。</td><td>文件哈希/解码哈希/来源映射，合并重复簇，原件保持不动。</td></tr><tr><td>父级Parkinson_3700有F_Con、F_Dys、wav_arrayMic_FC01S01等命名</td><td>与TORGO形式强相似；“Parkinson”文件夹名不足以证明PD标签。</td><td>隔离身份未确认库；先与TORGO对照文件内容/元数据，不纳入PD任务。</td></tr><tr><td>fresh UAspeech：Healthy含F02，Disorder含CF02；RAWDysPeech 1含F02</td><td>UASpeech原始论文把F02列为构音障碍说话人；旧整理的Healthy映射至少存在强烈冲突。</td><td>禁用旧二分类映射；从父级人员元数据重建并抽查，不能自动整体翻转就算修好。<sup><a href="#ref-ua">[R5]</a></sup></td></tr><tr><td>Troparion父级Control39、Pathology15，旧表却写相反</td><td>文件目录与网上整理表冲突，不由旧表多数投票决定。</td><td>查Database_description与原始说明，核对类别语义/身份；先不作ALS主实验。</td></tr><tr><td>ADReSSo_2023内部实际有ADReSS_M_train及Greek test</td><td>目录名可能与语料正式名称不符，不能模糊匹配后沿用ADReSSo协议。</td><td>建议匹配D059但状态pending，保留官方train/test与sample身份，不当一个普通随机库。</td></tr></tbody></table></div><p>还有计数一致性问题：报告中India_lung_sound总数757，但所列目录分组计数合计699；Parkinson_3700为3633但分组合计3635；TORGO和RAWDysPeech父/子多个卡片也有2条差值。本次可确认的是<strong>报告内部算术不一致</strong>，无法仅靠HTML判断原因。新扫描器必须断言“有效＋排除＋未识别＝发现文件”，且总数与分组口径一致。</p><div class="note"><strong>本次不执行自动名称合并。</strong>DAC→DAIC-WOZ、EDAC→E-DAIC、Spanish_logrado→利马语料、lung_sound_3200→KAUH等都是候选映射。新增aliases.yaml可登记suggested/confirmed/rejected；正式manifest必须使用已确认canonical_id。模糊名称匹配只生成建议，不生成临床标签。</div></section><section id="map"><div class="kicker">03 · 产品的五个模块</div><h2>一个数据集只写一个Adapter；训练和结果模块保持不变。</h2><div class="flow"><div><strong>① 数据适配</strong><small>每库一个Adapter<br>输出标准Record</small></div><div><strong>② 任务编译</strong><small>标签/筛选/分组/split<br>输出TaskSnapshot</small></div><div><strong>③ 视图与前端</strong><small>Hz/位置/时长/窗口<br>输出AudioBatch/FeatureBatch</small></div><div><strong>④ 统一运行器</strong><small>选模型/训练/验证<br>输出标准预测</small></div><div><strong>⑤ 统一结果</strong><small>聚合/指标/图表<br>输出RunBundle</small></div></div><p>你说的三层在这里展开成五模块：①②③属于数据层，④是模型运行层，⑤是结果层。任务编译与声音视图分出来，是为了不让Adapter偷偷决定随机划分、采样率或类别阈值。</p><div class="tablewrap"><table><thead><tr><th>模块</th><th>允许知道什么</th><th>不允许做什么</th><th>新增数据集是否改它</th></tr></thead><tbody><tr><td>Adapter</td><td>该库目录/文件/元数据的含义、人员与录音关系、原标签</td><td>训练、随机划分、调参、删改原件、计算测试成绩</td><td>新增一个模块＋注册记录</td></tr><tr><td>TaskCompiler</td><td>标准Record、TaskSpec、标签映射、人员关系与既有split</td><td>阅读某库特有目录、靠文件夹数量猜疾病标签</td><td>已有分类语义范围内不改</td></tr><tr><td>ViewBuilder</td><td>统一AudioSource、允许区间、视图配置、分区train/val/test</td><td>按数据集名if分支、按测试成绩改裁剪位置</td><td>支持的声道/区间模式内不改</td></tr><tr><td>Runner/ModelRegistry</td><td>AudioBatch/FeatureBatch、C、模型能力、训练配置</td><td>读取EATD或MDVR路径规则、写私有指标</td><td>只新增模型时注册插件</td></tr><tr><td>Evaluator/Report</td><td>统一预测、class_order、评价单位、指标配置</td><td>按数据集名调用不同准确率公式、静默删除失败任务</td><td>分类新库不改；新任务类型才扩schema</td></tr></tbody></table></div><p>“下游不变”的保证有边界：本次v0.1只支持<strong>单标签二分类/多分类</strong>，C≥2；回归、多标签、生存分析不假装自动兼容。新增普通分类数据集只增加Adapter＋声明式TaskSpec；若出现完全新音频容器，增加Decoder插件，这仍是数据插件而非改训练器。</p><p>参数不同不是代码逻辑分叉。CNN与MLP都由相同Runner选择，前端和预测器是模型插件的一部分；所有输出都为固定class_order的[B,C] logits或概率，Evaluator只按task_type与C分派。</p></section><section id="contracts"><div class="kicker">04 · 必须落成代码的数据结构</div><h2>用类型和验证器约束输入，不靠README口头约定。</h2><pre><code># src/sddbench/contracts.py  —— 拟实现接口（Python类型示意）
+@dataclass(frozen=True)
+class SourceRecord:
+    schema_version: str             # &quot;1.0&quot;
+    dataset_id: str                 # canonical_id，不是本地目录名
+    release_id: str
+    recording_id: str               # 稳定标识；同名文件跨目录仍唯一
+    relative_path: str              # 相对于本地绑定的数据根
+    subject_key: str | None         # 经元数据确认的匿名人员键
+    subject_basis: str              # metadata / directory / documented_one_per_person / unknown
+    session_key: str | None
+    source_recording_key: str       # 多麦克风/处理版本共用原录音来源键（有依据才填）
+    variant: str                    # original / denoised / vad / augmented / unknown
+    sound_kind: str                 # speech / phonation / ddk / cough / breath / auscultation
+    elicitation: str
+    labels_raw: dict                # 原始评分/组别，不先统一成“患病”
+    allowed_regions: list           # [(start_s,end_s)]；whole-record可为[(0,duration)]
+    audio_meta: dict                # sr/channels/duration/decode_status/content_hash
+    provenance: dict                # source_file/row/label evidence/parent/channel/mic
+
+@dataclass(frozen=True)
+class TaskSample:
+    sample_id: str
+    recording_id: str
+    group_id: str                   # 防泄漏单位，同人/关联来源连通组
+    evaluation_id: str              # person / person-session / recording / event
+    subject_key: str | None
+    y: int                         # 0 .. C-1
+    region_start_s: float
+    region_end_s: float
+    provenance: dict
+
+@dataclass(frozen=True)
+class TaskSnapshot:
+    task_id: str
+    task_hash: str
+    class_order: list[str]          # 长度C，唯一顺序
+    positive_class: str | None      # 二分类必需，多分类null
+    evaluation_unit: str
+    samples: list[TaskSample]
+    manifest_hash: str
+
+# 统一预测表PredictionRow：
+# run_id, task_hash, split_hash, view_hash, fold, seed, split,
+# sample_id, window_id, recording_id, group_id, evaluation_id,
+# y_true, probs: list[float], valid_duration_s</code></pre><h3>字段的三个关键约束</h3><ol><li><strong>subject_key不能猜：</strong>人员暂未知可做scan/prepare，但人员独立正式任务编译必须阻塞。若官方证明一人一原录音，可生成匿名人员键并记录依据；文件数等人数不足以证明。</li><li><strong>source_recording_key不是万能身份：</strong>同人不同时间录音仍须同group；同一原录音不同麦克风/增强版本属于同来源簇。跨库已知同人需跨库映射，给ID加库名前缀不消除重叠。</li><li><strong>evaluation_id决定指标口径：</strong>同人标签一致时可按人聚合；纵向标签变化时用人—会话预测，但split/置信区间仍按人分组。事件分类以事件为单位，不能强行把不同事件标签平均为病人标签。</li></ol><h3>产物分层，程序生成而不是要求你手填</h3><div class="tablewrap"><table><thead><tr><th>产物</th><th>存什么</th><th>什么时候改变</th></tr></thead><tbody><tr><td>source_manifest.jsonl</td><td>SourceRecord与排除/未解决记录；每条都有来源证据</td><td>原始文件/标签元数据或Adapter代码改变</td></tr><tr><td>task_snapshot.parquet＋task.json</td><td>筛选后的TaskSample、类别顺序、标签映射版本</td><td>目标标签/纳入规则/评价单位改变</td></tr><tr><td>splits.parquet＋split.json</td><td>sample_id/group_id对应fold和train/val/test；实际人数与完整性检查</td><td>分组、划分算法/种子/名单改变</td></tr><tr><td>view_index.parquet＋view.json</td><td>固定音频区间和窗口；随机位置已物化到索引</td><td>采样率/观察位置/长度/窗口策略改变</td></tr><tr><td>run_bundle/</td><td>配置、标准化器、checkpoint、预测、指标、日志</td><td>每次实验有独立run_id，不覆盖</td></tr></tbody></table></div><p>JSONL和Parquet是软件内部资产；审查XLSX仍只供人选库。这不是重新让你人工维护一堆互相矛盾的表。</p></section><section id="adapters"><div class="kicker">05 · 新增数据集具体怎么写</div><h2>把EATD和MDVR写成两个插件，检验“下游零修改”。</h2><pre><code># src/sddbench/adapters/base.py
+class DatasetAdapter(Protocol):
+    dataset_id: str
+    adapter_version: str
+    def scan(self, root: Path) -&gt; ScanReport: ...
+    def prepare(self, root: Path, config: DatasetConfig) -&gt; PrepareResult: ...
+
+# PrepareResult = records + exclusions + unresolved + summary
+# prepare只输出元数据与原件引用，不生成分类目录，不重采样，不划分。
+# 注册表显式登记，不靠import时偷偷修改全局状态。
+ADAPTERS = {&quot;eatd&quot;: EatdAdapter, &quot;mdvr_kcl&quot;: MdvrAdapter}
+
+# 新库的提交范围：
+# 1) adapters/new_corpus.py
+# 2) configs/datasets/new_corpus.yaml
+# 3) configs/tasks/new_task.yaml
+# 4) tests/fixtures/new_corpus/ 的合成文件与标签
+# 5) docs/datasets/new_corpus.md
+# Runner / Evaluator / 既有Model不得因新增普通分类库修改。</code></pre><div class="tablewrap"><table><thead><tr><th>插件</th><th>实际目录解析规则</th><th>标签与身份</th><th>不能做的推断</th></tr></thead><tbody><tr><td>EatdAdapter</td><td>从父级EATD/EATD-Corpus查找人员目录；识别positive/negative/neutral及_out版本；检测并排除旁文件</td><td>保留原目录完整键；读label.txt/new_label.txt及官方划分信息，输出原始SDS与可用记录</td><td>不将t_7与v_7自动当同一个人，也不能未经元数据确认就认不同人；不把positive当抑郁阳性标签。</td></tr><tr><td>MdvrAdapter</td><td>从父级Parkinson_KCL_2017读取ReadText/HC、ReadText/PD；对话保留为另一个elicitation</td><td>IDxx作为库内人员线索；HC/PD映射由官方README和目录/文件名交叉验证；保留严重度字段但不作模型输入</td><td>H&Y、UPDRS与pd/hc字串会泄漏标签，绝不作为声学模型特征；文件名不传给网络。</td></tr><tr><td>以后EasyCall</td><td>人员目录→Sessione→命令词，统计两组共同prompt集合</td><td>用原人员信息确认病例/对照；筛共同命令词，全部session按人归组</td><td>不是318疾病类别；不从每个session新造一个人。</td></tr><tr><td>以后UASpeech/TORGO</td><td>选择一种明确mic；保留subject/session/prompt/utterance</td><td>源说明与身份表确认组别；跨任务/麦克风处理同人</td><td>旧fresh二分类标签不当真值；不能将143290个麦克风文件当143290个人。</td></tr></tbody></table></div><h3>EATD任务配置：未知阈值就阻塞，不猜</h3><pre><code># configs/tasks/eatd_sds_binary_v1.yaml
+schema_version: &quot;1.0&quot;
+id: eatd_sds_binary_v1
+dataset: eatd
+include:
+  variant: [original]
+  elicitation: [positive, negative, neutral]
+label:
+  source: labels_raw.sds_standard
+  mapping: binary_threshold
+  threshold: null       # TODO：核对官方分组/论文/代码后填，未填则compile报错
+  operator: ge
+classes: [non_depressed, depressed]
+positive_class: depressed
+evaluation:
+  unit: subject
+  group_key: subject_key
+  label_consistency: required
+# t_/v_前缀是原身份/划分信息，解析规则需在真实元数据上确认。</code></pre><p>若已有可信的官方二分类label文件，优先直接映射该标签并登记来源，未必需要自己从分数重新阈值化；两种定义不能混用。先导合成数据可填已知人工标签测试引擎，不能把合成演示结果写成真实EATD成绩。</p><h3>启动MDVR任务的声明</h3><pre><code># configs/tasks/mdvr_pd_read_v1.yaml
+schema_version: &quot;1.0&quot;
+id: mdvr_pd_read_v1
+dataset: mdvr_kcl
+include: {elicitation: [ReadText], variant: [original]}
+label:
+  source: labels_raw.group
+  mapping: explicit
+  map: {HC: control, PD: parkinson}
+classes: [control, parkinson]
+positive_class: parkinson
+evaluation: {unit: subject, group_key: subject_key, label_consistency: required}</code></pre></section><section id="compile"><div class="kicker">06 · 任务编译与划分</div><h2>目录组→有语义的任务→固定人员清单，必须分三步。</h2><p><strong>TaskCompiler.compile(records, TaskSpec)</strong>依次：筛选声学类型和版本→检查source/group证据→按显式规则映射标签→检查同evaluation_id标签一致→生成样本表→输出类别/人数/排除原因；未知标签或身份直接列unresolved。正式train不能静默drop未知样本。</p><p><strong>Splitter.build(TaskSnapshot, SplitSpec)</strong>只看人员键和允许用于分层的训练标签，生成固定split。对相同group、已知来源簇、增强parent、访次进行跨集合断言。简单二分类可以先对每人一行的表做分层拆分，再广播到音频；不能让片段数多的人影响分层比例。</p><pre><code># configs/protocols/demo_grouped_v1.yaml
+id: demo_grouped_v1
+mode: grouped_holdout
+train_fraction: 0.60
+val_fraction: 0.20
+test_fraction: 0.20
+seed: 2026
+stratify: label_at_evaluation_unit
+require_all_classes: true
+min_groups_per_class_per_split: 2
+on_infeasible: error            # 不自动回退文件随机划分
+
+# 发表用另注册subject_cv_v1：
+# 外层按人3折(可行才用)，各外层train内再划分val；
+# 复杂多标签/纵向数据须专门分层策略，不套上面一人一标签规则。</code></pre><p>Demo的60/20/20仅用于闭环验证，和正式的外层分组交叉验证是不同protocol_id。原官方split可靠则优先复现；无公开测试标签可登记另一套本地研究协议。不要为了界面“一键”把不可行划分自动改成按文件随机。</p><p>scikit-learn提供StratifiedGroupKFold等成熟工具，仍需要你在实际输出上断言人员互斥与类别覆盖；它不是医学数据自动去重器。<sup><a href="#ref-split">[R3]</a></sup></p></section><section id="views"><div class="kicker">07 · Hz、长短、位置怎样统一控制</div><h2>这组参数只在AudioView变化，不写进每个Adapter。</h2><p>数据适配完成后，原音频保持只读。<code>ViewBuilder.plan(snapshot, splits, ViewSpec)</code>输出确定的窗口索引；<code>AudioReader.load(window, root_binding)</code>负责加载、选通道、裁剪、重采样及返回有效长度。裁剪坐标统一使用原始文件秒数，不用各库不同采样点数。</p><div class="tablewrap"><table><thead><tr><th>参数</th><th>v0.1取值/语义</th><th>关键约束</th></tr></thead><tbody><tr><td>target_sr_hz</td><td>16000；以后可以8000/16000/32000</td><td>模型capabilities不支持该Hz则plan报错；不偷偷升采样。区分接口采样率与有效带宽。</td></tr><tr><td>bandwidth_hz</td><td>null；可选4000Hz受控降带宽</td><td>16k音频→8k→16k等操作明确写入视图；与直接喂8k接口不同。原8k数据不能用于高频恢复实验。</td></tr><tr><td>observe_seconds</td><td>all 或固定秒数，如16</td><td>指每条合格样本实际听多少时间，不是编码器窗口大小；短录音只听现有部分，不循环填充。</td></tr><tr><td>anchor</td><td>head / center / tail / fraction / fixed_random</td><td>位置仅在合法目标人区间内选择；fixed_random由sample_id＋view_seed决定并保存，不每次重跑重抽。</td></tr><tr><td>window_seconds</td><td>4.0；stride_seconds默认等于window_seconds</td><td>总观察16秒可分4个4秒窗；2秒或8秒窗口是上下文实验，不改变总观察预算。v0.1主轨道强制stride=window，避免重叠窗口重复计时；以后开放重叠需另定覆盖权重和协议。</td></tr><tr><td>tail_min_seconds</td><td>0.25（初始建议）</td><td>小于该阈值的末尾残片排除并记录损失时长；其他残片保留、补零、mask。所有方法共用同一索引。</td></tr><tr><td>channel_policy</td><td>select或已证明同一声音的mean</td><td>采访者/病人或音频/EGG不同通道不能平均；mic文件版本也要先在任务筛选中固定。</td></tr><tr><td>amplitude_policy</td><td>none；模型专属必需归一化在ModelSpec声明</td><td>不一边删除停顿一边研究停顿；VAD/降噪以单独variant处理，初版不加。</td></tr><tr><td>train_position_policy</td><td>与eval相同固定索引</td><td>v0.1不做random_per_epoch以保持缓存一致；以后新增只限训练的在线采样，必须记录种子/epoch。</td></tr></tbody></table></div><h3>具体走一遍</h3><p>假设一条已确认目标人录音为20秒，设置observe=16、anchor=center、window=4、stride=4：观察区间为[2,18]，窗为[2,6]、[6,10]、[10,14]、[14,18]。把anchor改tail，仅变为[4,20]及相应窗口；模型和Evaluator无需修改。若有采访者区间，按合法区间策略处理，不跨不连续访谈轮次假造连续时间。</p><p>若录音只有3秒而window=4，返回有效3秒＋必要补零。模型前端只能对有效帧求统计量；单纯把补零算进去会让时长变成无意特征。骨干最小样本长度与模型mask行为须验证；无法支持的极短片段标blocked或按明确政策排除，不能临时改任务。</p><h3>返回值契约</h3><pre><code>AudioBatch = {
+  &quot;waveform&quot;: FloatTensor[B, Nmax],   # float32，batch补零
+  &quot;valid_samples&quot;: LongTensor[B],
+  &quot;sample_rate_hz&quot;: 16000,
+  &quot;y&quot;: LongTensor[B],
+  &quot;window_id&quot;: list[str],
+  &quot;sample_id&quot;: list[str],
+  &quot;evaluation_id&quot;: list[str],
+  &quot;group_id&quot;: list[str],
+}
+# 非模型元数据只用于采样/审计/聚合，不进入网络。
+# SSL前端返回frames[B,T,D]与frame_lengths[B]；
+# 传统前端返回features[B,F]或mel[B,1,F,T]及有效长度。</code></pre></section><section id="models"><div class="kicker">08 · 模型层到底怎样统一</div><h2>一个Runner管理所有分类模型；前端和网络都通过配置注册。</h2><pre><code>class ClassifierPlugin(Protocol):
+    def capabilities(self) -&gt; ModelCapabilities: ...
+    def build(self, model_spec: ModelSpec, num_classes: int): ...
+    def fit(self, train_loader, val_loader, context: RunContext) -&gt; FitResult: ...
+    def predict(self, loader, checkpoint: Path) -&gt; PredictionTable: ...
+
+# 同一个Runner调用；sklearn和torch训练实现可不同，但预测契约相同。
+# fit禁止读取test_loader；predict不再fit标准化器或更新参数。
+# num_classes来自TaskSnapshot；分类头自动输出C维，不靠库名写死。
+
+MODELS = {
+  &quot;mfcc_lr&quot;: MfccLogisticRegression,
+  &quot;mfcc_mlp&quot;: MfccMLP,
+  &quot;mel_cnn&quot;: MelCNN,
+  &quot;ssl_linear&quot;: FrozenSSLLinear,
+}</code></pre><div class="tablewrap"><table><thead><tr><th>模型</th><th>初版建议参数</th><th>能通过配置改变什么</th><th>与其他模型共同遵守什么</th></tr></thead><tbody><tr><td>MFCC＋LR</td><td>40 MFCC含第0项，均值＋标准差80维；训练集拟合Scaler；逻辑回归</td><td>C正则强度、MFCC数/窗移；仅训练拟合变换</td><td>相同窗口索引、split与class_order；相同评价聚合</td></tr><tr><td>MFCC＋MLP</td><td>80→128→C；ReLU；dropout=0.2</td><td>hidden_dims=[64]/[128]/[256]、dropout、lr、weight_decay</td><td>不能因新库改train.py；缺失输入自动报错而不是切换模式</td></tr><tr><td>Mel＋CNN</td><td>64 Mel；3×3卷积通道32/64/128，池化后global readout→C</td><td>channels、kernel、dropout、Mel频带数</td><td>有效长度/卷积输出mask；不同长度不展平到任意巨大FC</td></tr><tr><td>冻结SSL＋线性头</td><td>指定检查点revision；最后层；masked mean→C</td><td>checkpoint、layer、pooler、head_dims；先固定mean</td><td>输入Hz符合能力声明；冻结时eval()＋no_grad()；归一化明确</td></tr><tr><td>未来方法</td><td>新增pooler或adapter组件，而不重写评价脚本</td><td>后续研究二的统计/注意力聚合、研究三的共享模块</td><td>预测表仍[B,C]，同Evaluator评估；任务类型变化需新schema</td></tr></tbody></table></div><p>传统前端25ms窗、10ms hop、16k下FFT512、64 Mel等可作起点，但必须同时锁定Mel尺度、log变换、DCT、窗函数、中心填充、库版本。任意输入Hz变化时以毫秒计算实际窗长/步长，并显式检查FFT容量与fmax≤Nyquist，不能沿用不适配的硬编码。</p><p>初版神经模型可用AdamW、lr=1e-3、weight_decay=1e-4、batch=32、最多80轮/5000更新、val patience=10作为<strong>先导配置</strong>。正式预算在少量训练/验证检查后锁定；不能把这些值称医学最优参数。跨模型有相同候选次数不等于相同GPU成本，成本另报。</p><h3>训练数据单位：两种政策不要混在一起</h3><p>v0.1选择<strong>全部固定窗口＋训练损失权重</strong>：同评价人员/会话的所有片段总权重为1；人员下录音等权、录音内窗口按有效时长归一。分类不平衡先保持自然人数分布并用balanced accuracy；如需类权重，基于训练人员计算、所有方法一致，不同时又无说明过采样。v0.2可换人员均匀采样，但单独protocol版本，并记录每任务实际曝光。</p></section><section id="config"><div class="kicker">09 · 配置怎样组合与批量实验</div><h2>一个ExperimentSpec合成所有层，不再手工修改五个脚本。</h2><pre><code># configs/experiments/demo_mlp.yaml —— 拟建配置，非已运行结果
+schema_version: &quot;1.0&quot;
+task: mdvr_pd_read_v1
+split: demo_grouped_v1
+view:
+  sound_scope: speech_core
+  target_sr_hz: 16000
+  bandwidth_hz: null
+  observe_seconds: all
+  anchor: head
+  window_seconds: 4.0
+  stride_seconds: 4.0
+  tail_min_seconds: 0.25
+model:
+  id: mfcc_mlp
+  frontend: {id: mfcc_stats, n_mfcc: 40, win_ms: 25, hop_ms: 10, n_fft: 512}
+  hidden_dims: [128]
+  dropout: 0.2
+training:
+  seed: 0
+  optimizer: adamw
+  lr: 0.001
+  weight_decay: 0.0001
+  batch_size: 32
+  max_epochs: 80
+  max_steps: 5000
+  early_stop: {monitor: val.primary_balanced_accuracy, mode: max, patience: 10}
+  loss_weighting: equal_eval_unit
+metrics:
+  primary_unit: subject
+  primary: balanced_accuracy
+  positive_class: parkinson          # 与TaskSnapshot一致，否则报错
+  binary_threshold: 0.5
+  multiclass_auc: ovr_macro
+runtime: {device: cuda:0, num_workers: 4}</code></pre><h3>执行计划在GPU开跑之前就完全可见</h3><p><code>Planner.expand(ExperimentSpec/SweepSpec)</code>解析注册项、能力、配置类型和组合，生成每个job的完整配置与run_id；校验全部字段，不接受拼错的drop_out等未知键。按task标签数设置输出C，检查split类别、视图Hz和层范围。输出预计任务数、可运行/阻塞/不兼容数及每条原因。只有plan成功，Runner才开始。</p><pre><code># configs/sweeps/mlp_sensitivity.yaml
+base: experiments/demo_mlp.yaml
+tasks: [eatd_sds_binary_v1, mdvr_pd_read_v1]
+mode: grid
+parameters:
+  model.hidden_dims: [[64], [128], [256]]
+  model.dropout: [0.0, 0.2, 0.5]
+  training.seed: [0, 1, 2]
+# 总计2×3×3×3=54个job；这是敏感性描述，不以test选赢家。
+# 若做HPO：mode=search，只按train内val选，test在锁定后评估。</code></pre><p>频率、位置、时长、模型宽度和dropout不要全部做笛卡尔积：2任务×3频率×3时长×3位置×3宽度×3dropout×3seed已达1458次，还未含折数。先单因素或事先声明小范围交互。扫参数作研究描述与用验证集挑参数是不同模式，结果中标exploratory/selection/confirmatory。</p><div class="tablewrap"><table><thead><tr><th>层级</th><th>例子</th><th>优先级/约束</th></tr></thead><tbody><tr><td>TaskSpec</td><td>标签、人员、声音类型、类别顺序</td><td>标签顺序/身份不能随运行覆盖；改变即新task_hash</td></tr><tr><td>Protocol/SplitSpec</td><td>官方/自建划分、分组算法和seed</td><td>split独立保存，扫模型不重抽人员</td></tr><tr><td>ViewSpec</td><td>Hz、带宽、观察位置/长度、窗口</td><td>扫视图重建view与前端缓存，不重拆split</td></tr><tr><td>ModelSpec＋TrainSpec</td><td>前端、层、宽度、dropout、优化参数</td><td>只允许已声明模型字段；model能力不匹配则明确拒绝</td></tr><tr><td>RuntimeSpec</td><td>路径、设备、worker</td><td>记录环境但不作为科学参数；不可改变观察内容。</td></tr><tr><td>配置优先级</td><td>schema默认→明确base/引用→experiment→CLI覆盖</td><td>完整合成后保存resolved_config；科学受保护字段不允许临时CLI绕过锁定。</td></tr></tbody></table></div></section><section id="runner"><div class="kicker">10 · 一个run内部的准确调用顺序</div><h2>数据准备只做一次，配置实验按指纹复用。</h2><pre><code>def run_one(plan: ResolvedPlan) -&gt; RunBundle:
+    validate_plan(plan)                         # key/schema/capability/phase
+    source = load_prepared_manifest(plan.manifest_hash)
+    task = load_task_snapshot(plan.task_hash)
+    splits = load_split_snapshot(plan.split_hash)
+    view = load_or_build_view(task, splits, plan.view_spec)
+    assert_no_group_or_parent_leakage(task, splits)
+    loaders = make_loaders(view, plan)          # train/val/test明确分开
+    model = MODEL_REGISTRY[plan.model.id].build(plan.model, len(task.class_order))
+    fitted_transforms = fit_train_transforms(loaders.train, plan)  # 只看train
+    loaders = apply_frozen_transforms(loaders, fitted_transforms) # 三个集合用同一train拟合结果
+    fit_result = model.fit(loaders.train, loaders.val, context=plan.context)
+    freeze_selected_config_and_checkpoint(fit_result)
+    predictions = model.predict(loaders.test, fit_result.best_checkpoint)
+    verify_prediction_coverage(predictions, view.test_windows)
+    eval_predictions = aggregate_predictions(predictions, plan.aggregation)
+    metrics = evaluator.compute(eval_predictions, plan.task_contract)
+    return bundle_writer.commit(plan, fit_result, predictions, metrics,
+                                fitted_transforms=fitted_transforms)
+
+# 实际实现将train-valid与test作为可单独调用阶段；
+# 若task未准入、test未解锁、缺任何应预测行或重复预测，禁止完成标记。</code></pre><h3>窗口→录音→评价对象的固定聚合</h3><p>先对softmax概率而非logit/硬标签聚合。窗口按有效时长归一，得到sample/录音概率；同一evaluation_id多条合格录音等权平均（或任务预声明的策略），最后按二分类阈值/多分类argmax出预测。分类标签应在该评价对象内一致，否则TaskCompiler必须报错。评价单位不同允许注册不同策略，但公式实现不能按数据集名分叉。</p><p>同样的metrics引擎可以同时输出recording与subject指标，必须以unit明确命名。主比较只比同一task_hash、split_hash和主评价单位下的模型；不把录音accuracy和人员accuracy放一列混平均。</p><h3>缓存三类，失效边界分别定义</h3><div class="tablewrap"><table><thead><tr><th>缓存</th><th>key至少包含什么</th><th>不能做什么</th></tr></thead><tbody><tr><td>解码/视图</td><td>源文件内容哈希、region、声道、解码器/重采样版本、观察/窗口配置</td><td>改采样率/位置仍复用旧wave；只凭文件名找cache</td></tr><tr><td>冻结前端/SSL帧</td><td>view_hash＋前端参数/检查点revision/层/精度/归一化</td><td>更新骨干LoRA后继续复用旧帧；训练dropout开启提取永久特征</td></tr><tr><td>拟合变换</td><td>训练split_hash＋特征key＋标准化/PCA/选择算法配置</td><td>用全数据拟合Scaler再称按人无泄漏；跨CV折共享有监督变换</td></tr></tbody></table></div><p>调dropout只重训头，通常复用冻结特征；改MFCC维数重算传统特征；改observe位置重建view；改split重做训练拟合变换。原始解码可跨split复用，因其不学习标签/总体统计。冻结骨干先串行提取，补零mask/GroupNorm导致批量不等价时不能简单靠GPU批量加速。</p></section><section id="metrics"><div class="kicker">11 · 结果层完整指标规范</div><h2>该有的都算，但“不适用”必须显式返回NA与原因。</h2><p>所有分类任务共用一个<code>ClassificationEvaluator</code>，底层调用锁定版本的scikit-learn。返回结构固定；二分类/多分类、评价单位与类别集合决定数学定义，不由数据集私自决定。<sup><a href="#ref-metrics">[R1]</a> <a href="#ref-auc">[R2]</a></sup></p><div class="tablewrap"><table><thead><tr><th>输出</th><th>二分类</th><th>多分类/统一约定</th></tr></thead><tbody><tr><td>样本/人员规模</td><td>n_units、n_groups、每类support、排除/未覆盖数</td><td>类别顺序固定；显示计划与实际数量，不允许漏样本后只报高分</td></tr><tr><td>Accuracy</td><td>按阈值的正确率</td><td>argmax正确率；同时显示class_support，不能靠多数类掩盖</td></tr><tr><td>Balanced accuracy</td><td>两类recall等权</td><td>各类别recall等权；预期类别未覆盖时主指标NA，避免静默变更类别集合</td></tr><tr><td>Precision / Recall / F1</td><td>正类值＋每类值＋macro/weighted</td><td>每类、macro与weighted均输出；micro可额外输出但对单标签常与accuracy重复</td></tr><tr><td>Sensitivity / Specificity</td><td>Sensitivity=TP/(TP+FN)；Specificity=TN/(TN+FP)</td><td>按每类one-vs-rest列；分母0则该率NA，不填0冒充有效</td></tr><tr><td>ROC-AUC</td><td>使用指定positive_class的概率，不使用0/1预测</td><td>固定OVR macro为主并逐类；可附OVO macro。某预期类别缺失则完整macro-AUC为NA＋原因</td></tr><tr><td>PR-AUC</td><td>主命名average_precision，另存PR曲线</td><td>逐类OVR AP及macro；明确AP不是PR曲线梯形积分的同一个值；类别缺少正/负支持时NA</td></tr><tr><td>Confusion matrix</td><td>固定2×2顺序＋TN/FP/FN/TP</td><td>固定C×C顺序，另存按真实类归一版本，零support行标注</td></tr><tr><td>Log loss / Brier</td><td>概率clip到已声明epsilon；正类Brier作为概率误差</td><td>多分类log loss；多分类Brier若实现须新明确定义，v0.1可NA</td></tr><tr><td>曲线与图</td><td>ROC、PR、混淆矩阵、loss/val学习曲线</td><td>多分类逐类ROC/PR可折叠展示；无定义不画假曲线</td></tr><tr><td>不确定性</td><td>人员成簇bootstrap，配对比较同一测试人员</td><td>Demo可不跑CI但标not_requested；正式关键结果固定重抽样次数/seed，报告有效bootstrap次数</td></tr><tr><td>成本</td><td>总参数、可训练参数、提取/训练/推理时间、峰值显存、设备</td><td>时延说明是否包含解码/特征提取、batch大小与预热；不能混用不同测量口径</td></tr></tbody></table></div><h3>零分母、单类与缺样本政策</h3><p>Precision/F1可用<code>zero_division=0</code>保障报告结构稳定，但必须标出undefined类与support；这不意味着Specificity/AUC也填0。AUC依赖正负支持，单类test返回null与<code>single_class_y_true</code>。缺失类别时全类别主balanced accuracy/AUC不进排名，其他能定义的指标保留并警告。非有限概率、向量长度≠C、行和偏离1、重复window_id、标签不一致应fail，不是NA继续出榜。</p><p>二分类默认阈值0.5；若用验证集优化阈值，应保存threshold.json并另标协议，不在测试集调。多分类主轨道argmax；概率校准、逐类阈值属于另外的训练/选择步骤，不静默开启。macro/weighted、正类定义、计数单位全写入metrics.json。</p><h3>metrics.json固定结构示例</h3><pre><code>{
+  &quot;schema_version&quot;: &quot;1.0&quot;,
+  &quot;run_id&quot;: &quot;&lt;semantic_fingerprint&gt;&quot;,
+  &quot;task_id&quot;: &quot;mdvr_pd_read_v1&quot;,
+  &quot;evaluation_unit&quot;: &quot;subject&quot;,
+  &quot;class_order&quot;: [&quot;control&quot;, &quot;parkinson&quot;],
+  &quot;positive_class&quot;: &quot;parkinson&quot;,
+  &quot;n_units&quot;: null,
+  &quot;primary_metric&quot;: &quot;balanced_accuracy&quot;,
+  &quot;metrics&quot;: {
+    &quot;accuracy&quot;: {&quot;value&quot;: null, &quot;status&quot;: &quot;not_run&quot;, &quot;reason&quot;: &quot;design_example&quot;},
+    &quot;balanced_accuracy&quot;: {&quot;value&quot;: null, &quot;status&quot;: &quot;not_run&quot;, &quot;reason&quot;: &quot;design_example&quot;},
+    &quot;roc_auc&quot;: {&quot;value&quot;: null, &quot;status&quot;: &quot;not_run&quot;, &quot;reason&quot;: &quot;design_example&quot;}
+  },
+  &quot;per_class&quot;: [],
+  &quot;coverage&quot;: {&quot;expected&quot;: null, &quot;predicted&quot;: null, &quot;missing&quot;: null},
+  &quot;warnings&quot;: []
+}
+# 本例故意不写虚构成绩。正式结果包含上表所有约定指标字段。</code></pre></section><section id="outputs"><div class="kicker">12 · 运行产物与复现</div><h2>一个run就是一个完整实验包，报告只能从预测重算。</h2><div class="tablewrap"><table><thead><tr><th>固定文件</th><th>内容</th><th>谁生成</th></tr></thead><tbody><tr><td>resolved_config.yaml</td><td>所有继承和CLI覆盖后的完整参数；不含凭证</td><td>Planner</td></tr><tr><td>provenance.json</td><td>task/split/view/model/cache哈希、source release、adapter版本、代码commit＋未提交diff快照</td><td>RunContext</td></tr><tr><td>environment.json＋requirements.lock</td><td>Python/库/GPU/CUDA/精度/确定性选项，精确依赖锁</td><td>RunContext</td></tr><tr><td>history.jsonl</td><td>每epoch/step loss与验证指标、更新数、曝光、early-stop事件</td><td>Trainer</td></tr><tr><td>selected_config.json＋best.ckpt</td><td>内验证选出的配置、最佳轮次及模型/标准化器；sklearn可用joblib但要标依赖</td><td>Trainer</td></tr><tr><td>last.ckpt</td><td>模型/优化器/调度器/RNG及数据迭代状态；或明示仅支持epoch边界恢复</td><td>Trainer</td></tr><tr><td>predictions_windows.parquet</td><td>每个预期window一行，y_true/完整概率向量/身份/有效时长</td><td>Predictor</td></tr><tr><td>predictions_units.parquet</td><td>聚合后每个评价对象一行；保留对应窗口/录音集合指纹</td><td>Aggregator</td></tr><tr><td>metrics.json＋per_class.csv</td><td>固定schema指标、NA原因、support与不确定性</td><td>Evaluator</td></tr><tr><td>figures/＋report.html</td><td>所有曲线/混淆矩阵、参数与数据口径、失败说明</td><td>Reporter</td></tr><tr><td>status.json＋events.jsonl</td><td>planned/running/succeeded/failed/blocked/interrupted状态与阶段事件</td><td>Runner</td></tr><tr><td>reproduce.sh</td><td>引用精确配置/数据指纹的复现命令，不包含私密绝对路径</td><td>Reporter</td></tr></tbody></table></div><p>同一run_id不允许被不同配置覆盖；数据根移动不改变科学身份，内容变化必须改变manifest指纹。只写“seed=0”不保证跨硬件逐位一致，报告数值容差与环境。中断恢复若不能恢复到确切batch位置，回到epoch边界并记录重放，不冒充精确续训。</p><h3>全套件结果固定怎么出</h3><p><code>results_long.parquet</code>按run/task/model/fold/seed/view/metric一行；<code>benchmark_table.csv</code>按任务×模型汇总；<code>suite_report.html</code>展示覆盖率、每任务主指标、成本和配置差异。只有相同task/split/评价单位才允许直接模型排名；跨任务等权平均必须使用相同预声明任务交集，失败任务在分母与覆盖中可见。</p><p>不用每个数据集手写accuracy.py，也不用从终端复制数字。对保存预测重新运行Evaluator应重现原指标（容差内）；这是首版最重要的验收之一。</p></section><section id="cli"><div class="kicker">13 · 使用路径与拟建命令</div><h2>你完成配置选择，系统完成重复劳动。</h2><p class="note">下面命令属于<strong>待实现产品接口</strong>，现在不能假定服务器已安装。Codex按该契约实现后，README中的演示必须真的跑通。<code>/YOUR/...</code>均为占位路径。</p><pre><code># 0. 初次只读扫描；父级为主，不自动训练fresh目录
+python -m sddbench scan --root /YOUR/dataset --scope parent --out work/scan
+
+# 1. 增量prepare：只接指定数据集，不解压/移动/删原件
+python -m sddbench prepare --dataset eatd --root /YOUR/dataset/EATD
+python -m sddbench prepare --dataset mdvr_kcl --root /YOUR/dataset/Parkinson_KCL_2017
+
+# 2. 任务编译→审计→划分，关键身份/标签未明会blocked
+python -m sddbench task build --task mdvr_pd_read_v1
+python -m sddbench task audit --task mdvr_pd_read_v1
+python -m sddbench split build --task mdvr_pd_read_v1 --protocol demo_grouped_v1
+
+# 3. 展示解析计划，再训练；test阶段单独执行
+python -m sddbench plan --config configs/experiments/demo_mlp.yaml
+python -m sddbench run --config configs/experiments/demo_mlp.yaml --phase train-valid
+python -m sddbench evaluate --run &lt;run_id&gt; --split test
+python -m sddbench report --run &lt;run_id&gt;
+
+# 4. 已锁定配置的一键闭环与批量执行
+python -m sddbench run --suite core_demo_v1 --phase all --resume
+python -m sddbench sweep --config configs/sweeps/mlp_sensitivity.yaml --dry-run
+python -m sddbench sweep --config configs/sweeps/mlp_sensitivity.yaml --resume
+python -m sddbench summarize --suite core_demo_v1</code></pre><p>一键all不是跳过审查：仅当任务已准入、split已锁定、测试阶段允许、计划能力校验通过才执行。研究开发阶段默认train-valid；正式发布配置再允许all。一键套件遇到某job失败可继续其他独立job，但最后退出状态与summary必须显示失败，不能“忽略失败算成功”。</p><h3>新增库的用户流程</h3><p>写Adapter和TaskSpec→注册→prepare→audit通过→放进suite.tasks。然后同一个run/sweep/evaluate/report自动适用，不改平台核心。若新库仍是普通分类但迫使修改Trainer/Evaluator读取其目录，视为架构验收失败，回到Adapter设计修正。</p></section><section id="repo"><div class="kicker">14 · 文件结构、状态与错误码</div><h2>Codex可以据此拆模块，不靠临时脚本堆叠。</h2><div class="tablewrap"><table><thead><tr><th>路径</th><th>职责</th></tr></thead><tbody><tr><td>src/sddbench/cli.py、registry.py、contracts.py</td><td>统一CLI、明确注册表、类型与schema版本</td></tr><tr><td>src/sddbench/adapters/{base,eatd,mdvr_kcl}.py</td><td>各库解析，返回标准Record/诊断</td></tr><tr><td>src/sddbench/data/{scan,audit,task,split,view,decode,loader}.py</td><td>标准任务处理与波形视图</td></tr><tr><td>src/sddbench/models/{base,mfcc_lr,mfcc_mlp,mel_cnn,ssl_linear}.py</td><td>模型插件；frontend可放features/</td></tr><tr><td>src/sddbench/engine/{planner,runner,train,cache,checkpoint}.py</td><td>运行编排、训练选择、缓存恢复</td></tr><tr><td>src/sddbench/eval/{aggregate,classification,bootstrap,report}.py</td><td>统一概率聚合、指标、图表与模板</td></tr><tr><td>configs/{datasets,tasks,protocols,views,models,experiments,suites,sweeps}/</td><td>声明式配置；configs/paths.local.yaml只在本机且不提交</td></tr><tr><td>work/{scan,prepared,tasks,splits,views,cache}/</td><td>全自动中间资产，可按内容key复用；不修改原始目录</td></tr><tr><td>runs/{run_id}/、reports/</td><td>固定RunBundle和套件汇总</td></tr><tr><td>tests/{unit,integration,fixtures}/、docs/</td><td>契约测试、小合成数据、数据卡与实现说明</td></tr></tbody></table></div><h3>首版错误码</h3><div class="tablewrap"><table><thead><tr><th>错误码</th><th>含义与动作</th></tr></thead><tbody><tr><td>E_DATASET_ID_UNCONFIRMED</td><td>名称匹配未确认；允许scan，正式prepare/task需绑定canonical_id</td></tr><tr><td>E_LABEL_UNRESOLVED</td><td>阈值/标签来源未知；停止该任务，不猜</td></tr><tr><td>E_GROUP_UNRESOLVED / E_SPLIT_LEAK</td><td>人员不清或跨集合重叠；停止正式训练</td></tr><tr><td>E_AUDIO_DECODE / E_VIEW_EMPTY</td><td>音频无效或有效区间为空；进入排除清单，重编任务需确认并改变hash</td></tr><tr><td>E_MODEL_INCOMPATIBLE</td><td>采样率/层/输入形状不支持；plan阶段拒绝，不自动偷偷改参数</td></tr><tr><td>E_PREDICTION_COVERAGE</td><td>缺少/重复预期预测；不标succeeded，不出正式主表</td></tr><tr><td>E_CONFIG_MISMATCH / E_CACHE_STALE</td><td>恢复配置不同或cache不匹配；拒绝复用，输出可重建步骤</td></tr><tr><td>E_METRIC_UNDEFINED</td><td>单类等指标不适用；metric-level NA不是整个训练失败</td></tr><tr><td>E_OUT_OF_MEMORY</td><td>记录stage/配置；不静默删长音频或降低输入时长。物理batch变化也需记入运行记录</td></tr></tbody></table></div><p>快照在临时文件写完后原子提交，manifest/split已锁定不原地编辑。OOM改batch与梯度累积可能改变BatchNorm行为，不能一句“有效batch没变”就声称完全等价。首版串行调度、单GPU即可；并行多GPU/网页后台不是第一阶段要求。</p></section><section id="acceptance"><div class="kicker">15 · Demo施工与验收</div><h2>先让MDVR和EATD共用一个引擎，跑出完整报告。</h2><div class="tablewrap"><table><thead><tr><th>工单</th><th>要交的代码/产物</th><th>验收条件</th></tr></thead><tbody><tr><td>P0 扫描修正</td><td>识别旁文件、压缩包、WFDB、WebM、音频可解码性、预处理/增强提示；输出scan.json/report</td><td>46目录每个有明确状态；分组和总数同口径相加；未解压只读列清单，不自动写原件</td></tr><tr><td>P1 合成端到端</td><td>两个不同目录布局的合成分类夹具、contracts/registry/task/split/view、dummy/MLP、统一Evaluator</td><td>prepare到report一次跑通；不需要真实受限语料。人工设定概率的金标准指标测试通过；不以模型高分作为测试</td></tr><tr><td>P2 MDVR真实Adapter</td><td>核ReadText ID、HC/PD、一致性；demo split；MFCC-LR/MLP</td><td>先只读样例确认元数据。37条朗读为报告参考，实际有效人数/条数以manifest为准；无同人跨集合</td></tr><tr><td>P3 EATD真实Adapter</td><td>原始/处理版配对、SDS标签与完整人员键；三段原始版本任务</td><td>只增Adapter/TaskSpec/夹具，不修改Runner/Evaluator；未知阈值应blocked。原/处理版不能混进两集合</td></tr><tr><td>P4 可复现实验包</td><td>完整RunBundle、恢复、缓存失效、从预测重算</td><td>改变dropout只训练头；改Hz重建view；改split重拟合Scaler；预测覆盖100%；重算指标一致</td></tr><tr><td>P5 扩展模型/扫参</td><td>CNN、SSL-linear；sweep planner；suite报告</td><td>不同模型按同一观察索引；不兼容组合plan时报错；失败不消失；换C=3合成任务不用改模型头/Evaluator</td></tr><tr><td>P6 正式研究套件</td><td>通过审计后加入EasyCall/Italian等，锁grouped CV/预算；生成配置敏感性图</td><td>结果能追溯split/model/view与脚本commit；默认与调优分开；测试不参与选参</td></tr></tbody></table></div><h3>首版必须存在的12个测试</h3><ol><li>每条manifest ID唯一、路径相对根且可定位；源metadata冲突明确报错。</li><li>增强parent/同人多会话/多麦克风不跨split；与任务标签无关的元数据不进模型输入。</li><li>EATD positive/negative任务词不会被当疾病标签；t_/v_人员规则由fixture明确验证而不是随意去前缀。</li><li>相同样本/head-center-tail产生预期秒区间，Hz变化不改变原始坐标。</li><li>4秒窗/3秒短音频/小尾窗处理符合配置，有效长度与排除时长一致。</li><li>二分类/三分类输出概率C维、类别顺序固定；C自动来自任务。</li><li>小型金标准预测的accuracy、macro-F1、specificity、AUROC与锁定sklearn定义一致。</li><li>单类test AUC返回NA＋原因；缺类别主指标不能悄悄出排行榜。</li><li>改变view/checkpoint/layer必使相应cache失效；训练Scaler不看val/test。</li><li>预测缺一行/重复一行必须不能标记succeeded；结果能由保存概率重算。</li><li>第二Adapter加入后共享引擎不修改；重命名本地数据根不改变task内容身份。</li><li>中断恢复边界清楚；相同config禁止不同内容覆盖同run_id，suite保留failed/blocked。</li></ol><p>这些测试保护的是论文结论与可复现性，不是为了堆测试数量。真实数据抽查是另外一层，合成夹具不能证明真实标签正确。</p></section><section id="handoff"><div class="kicker">16 · 可直接交给服务器Codex的开发任务</div><h2>先执行P0—P3，不一口气适配二三十库。</h2><pre><code>请根据本HTML实现sddbench v0.1 Demo，先做P0到P3。
+目标：两种原始目录布局 -&gt; 统一SourceRecord/TaskSnapshot -&gt; 固定人员划分 -&gt;
+统一AudioView -&gt; MFCC-LR/MLP -&gt; 相同PredictionTable -&gt; 相同Evaluator/RunBundle/report。
+
+我会指定数据根。只读dataset父级，不移动/删除/覆盖旧文件，不把fresh_datasets当真值。
+先修扫描口径：旁文件、可解码性、压缩包、WFDB/WebM、原始/处理/增强版本、总数一致性。
+先用合成fixture完成所有核心契约与指标测试，再接Parkinson_KCL_2017的ReadText。
+随后接EATD：核对完整人员目录键、raw/_out配对、SDS分组依据；未确认阈值就blocked。
+既有UAspeech整理映射存在F02与病例说明冲突，禁止直接复用；其他库本轮不训练。
+
+代码按本文模块与数据schema组织，配置schema严格验证，未知字段fail fast。
+所有CLI在README标清已实现/计划；不能只做空函数或只打印“成功”。
+每阶段提交：代码、测试输出、真实数据审计、运行命令、生成文件路径、已知未解决项。
+第二Adapter加入不得修改Trainer/Evaluator；用这个要求验证架构。
+不要同时建GUI、多GPU调度、全部模型、所有数据集；Demo通过后再按P4—P6扩展。</code></pre><p>你打开Trea后需要给出的只是：<strong>确认的数据根路径、允许创建新项目的位置、可用Python/GPU环境</strong>。Codex先提交扫描与两个Adapter的审计，不需要你提前给每个模型找最优参数。后续你加库的手工劳动集中在“写/检查Adapter与TaskSpec”，不再复制训练脚本。</p></section><section id="research"><div class="kicker">17 · 这个Demo怎样变成第一研究块</div><h2>先验收平台，再做受控实验，不能把软件功能直接当科学结论。</h2><div class="tablewrap"><table><thead><tr><th>实验</th><th>怎样在平台里表达</th><th>保持不变</th><th>产物</th></tr></thead><tbody><tr><td>默认基线</td><td>suite中选任务×LR/MLP/CNN/SSL-linear</td><td>split、观测区间、标签、评价单位</td><td>主矩阵、成本、覆盖率</td></tr><tr><td>采样率/带宽</td><td>只换ViewSpec，区分target_sr与bandwidth</td><td>模型接口支持、人员清单和其他参数</td><td>频带敏感性曲线，不做8k升采样恢复宣称</td></tr><tr><td>总时长/位置</td><td>observe_seconds与anchor单因素；同视图供所有模型</td><td>窗口/模型/人员/标签</td><td>观察预算与位置对成绩影响</td></tr><tr><td>上下文窗口</td><td>window=2/4/8秒，同时固定observe=16等</td><td>真实听到的总音频区间</td><td>编码上下文与聚合粒度影响；短录音不参不可能设置</td></tr><tr><td>容量/dropout</td><td>换ModelSpec相应一项</td><td>前端/数据view/split</td><td>参数敏感性与同预算选择后的排名</td></tr><tr><td>默认对调优</td><td>固定default对预声明候选search，每外层train内val选</td><td>外层test人员与主指标</td><td>结论是否依赖任意默认设置</td></tr><tr><td>人员划分诊断</td><td>另建文件随机diagnostic protocol</td><td>尽可能匹配规模/任务/类别，承认测试人群差异</td><td>泄漏风险分析；文件随机结果不进正式榜</td></tr></tbody></table></div><p>先两个真实任务证明可行，再扩到其他可信语音库。报告缺陷已经说明为什么不能现在一键跑二三十库：父级标签尚有目录误读、镜像、增强、处理版本和身份问题。平台自动化的是<strong>已明确定义的实验</strong>，不是自动猜出可信标签。</p></section><section id="inventory"><div class="kicker">附录A · 父级46目录范围台账</div><h2>这是纳入范围建议，不是自动完成的正式匹配。</h2><p>仅按服务器报告原名列示，不改原始目录、不将整理侧计入总量。未在下表明确的声音类型也必须经Adapter核查，不能靠库名作为最终分类。审查表的canonical_id匹配由aliases.yaml另行确认。</p><details><summary>展开46条父级目录</summary><div class="tablewrap"><table><thead><tr><th>父级目录原名</th><th>报告检出数</th><th>初步处置</th></tr></thead><tbody><tr><td>ADAPTIVE</td><td>0</td><td>语音候选，需任务/身份核实；零检出不等于空目录</td></tr><tr><td>ADReSSo_2020</td><td>0</td><td>语音候选，需任务/身份核实；零检出不等于空目录</td></tr><tr><td>ADReSSo_2021</td><td>0</td><td>语音候选，需任务/身份核实；零检出不等于空目录</td></tr><tr><td>ADReSSo_2023</td><td>299</td><td>语音候选，需任务/身份核实</td></tr><tr><td>Asthma_Detection_Tawfik</td><td>1,211</td><td>听诊/来源待核，扩展</td></tr><tr><td>BVS</td><td>85</td><td>语音候选，需任务/身份核实</td></tr><tr><td>COUGHVID_V3</td><td>0</td><td>咳嗽扩展/格式待查；零检出不等于空目录</td></tr><tr><td>COVID_19_CNN</td><td>171</td><td>咳嗽扩展</td></tr><tr><td>Chronic_Pain_Audio_Dataset</td><td>256</td><td>语音候选，需任务/身份核实</td></tr><tr><td>Coswara_Data</td><td>0</td><td>按声音类型拆轨道/压缩待查；零检出不等于空目录</td></tr><tr><td>DAC</td><td>188</td><td>语音候选，需任务/身份核实</td></tr><tr><td>EATD</td><td>972</td><td>语音候选，需任务/身份核实</td></tr><tr><td>EDAC</td><td>0</td><td>语音候选，需任务/身份核实；零检出不等于空目录</td></tr><tr><td>EasyCall</td><td>21,386</td><td>语音候选，需任务/身份核实</td></tr><tr><td>HLS_CMDS</td><td>1,070</td><td>模拟人，排除主轨道</td></tr><tr><td>ICBHI</td><td>920</td><td>听诊音扩展</td></tr><tr><td>India_lung_sound</td><td>757</td><td>听诊音扩展</td></tr><tr><td>Italian_Parkinsons_Voice_and_Speech</td><td>831</td><td>语音候选，需任务/身份核实</td></tr><tr><td>JPS2024_ALS</td><td>0</td><td>语音候选，需任务/身份核实；零检出不等于空目录</td></tr><tr><td>LSVT_parkinson</td><td>0</td><td>语音候选，需任务/身份核实；零检出不等于空目录</td></tr><tr><td>Minsk2020_ALS</td><td>0</td><td>语音候选，需任务/身份核实；零检出不等于空目录</td></tr><tr><td>NCMMSC2021_AD_Competition</td><td>806</td><td>语音候选，需任务/身份核实</td></tr><tr><td>Parkinson_3700</td><td>3,633</td><td>身份强疑，隔离</td></tr><tr><td>Parkinson_Disease_Classification_755</td><td>0</td><td>语音候选，需任务/身份核实；零检出不等于空目录</td></tr><tr><td>Parkinson_KCL_2017</td><td>73</td><td>语音候选，需任务/身份核实</td></tr><tr><td>ParkinsonsDisease_195</td><td>0</td><td>语音候选，需任务/身份核实；零检出不等于空目录</td></tr><tr><td>Parkinsons_Telemonitoring</td><td>0</td><td>语音候选，需任务/身份核实；零检出不等于空目录</td></tr><tr><td>Poultry_Vocalization_Signal</td><td>346</td><td>非人类排除</td></tr><tr><td>RAWDysPeech</td><td>160,923</td><td>混源派生，先回源</td></tr><tr><td>ReplicatedAcousticFeatures</td><td>0</td><td>语音候选，需任务/身份核实；零检出不等于空目录</td></tr><tr><td>Respiratory_Sound_Database</td><td>1,840</td><td>听诊音/ICBHI镜像待核</td></tr><tr><td>SLI_dataset</td><td>3,950</td><td>语音候选，需任务/身份核实</td></tr><tr><td>Spanish_logrado</td><td>701</td><td>语音候选，需任务/身份核实</td></tr><tr><td>TORGO</td><td>17,633</td><td>语音候选，需任务/身份核实</td></tr><tr><td>Troparion_master</td><td>54</td><td>语音候选，需任务/身份核实</td></tr><tr><td>UAspeech</td><td>143,290</td><td>语音候选，需任务/身份核实</td></tr><tr><td>UGAkan</td><td>14,312</td><td>语音候选，需任务/身份核实</td></tr><tr><td>VOICED</td><td>0</td><td>元音候选/WFDB待查；零检出不等于空目录</td></tr><tr><td>core_cleft</td><td>82</td><td>语音候选，需任务/身份核实</td></tr><tr><td>lung_sound_3200</td><td>336</td><td>听诊音扩展</td></tr><tr><td>parkinson_multiple_types</td><td>0</td><td>语音候选，需任务/身份核实；零检出不等于空目录</td></tr><tr><td>parkinsonsDisease_757</td><td>0</td><td>语音候选，需任务/身份核实；零检出不等于空目录</td></tr><tr><td>pitt</td><td>1,841</td><td>语音候选，需任务/身份核实</td></tr><tr><td>ultrasuite_cleft</td><td>1,441</td><td>语音候选，需任务/身份核实</td></tr><tr><td>ultrasuite_upx</td><td>5,948</td><td>语音候选，需任务/身份核实</td></tr><tr><td>ultrasuite_uxssd</td><td>3,729</td><td>语音候选，需任务/身份核实</td></tr></tbody></table></div></details></section><section id="refs"><div class="kicker">附录B · 来源与实现边界</div><h2>本次重点是产品规范，不重复罗列大量模型论文。</h2><p>附件依据：2026-11-08服务器统计HTML与本次审查简表。网页计数不是本次实测。外部核查只使用官方文档、作者资料与原始论文，读取范围为本次所需的接口/指标/身份信息；未连接服务器、未解码真实音频、未实现或运行本文拟建平台。</p><div class="ref" id="ref-metrics"><b>R1 · 统一分类指标定义</b><p>scikit-learn官方指标文档：Accuracy、precision/recall/F1等；本文指标字段/NA政策是产品规范，不是所有库默认值。</p><a target="_blank" rel="noopener noreferrer" href="https://scikit-learn.org/stable/modules/model_evaluation.html">打开原始来源</a></div><div class="ref" id="ref-auc"><b>R2 · AUC概率与多分类策略</b><p>roc_auc_score官方说明：二分类概率、OVR/OVO与平均方式。不要用硬标签算AUC。</p><a target="_blank" rel="noopener noreferrer" href="https://scikit-learn.org/stable/modules/generated/sklearn.metrics.roc_auc_score.html">打开原始来源</a></div><div class="ref" id="ref-split"><b>R3 · 分层且按组划分</b><p>StratifiedGroupKFold官方接口；需自行验证实际类别覆盖与group规则。</p><a target="_blank" rel="noopener noreferrer" href="https://scikit-learn.org/stable/modules/generated/sklearn.model_selection.StratifiedGroupKFold.html">打开原始来源</a></div><div class="ref" id="ref-opera"><b>R4 · 呼吸声独立领域参照</b><p>OPERA原始NeurIPS 2024页面，用于说明可设独立领域扩展；本文不要求首版复现。</p><a target="_blank" rel="noopener noreferrer" href="https://proceedings.neurips.cc/paper_files/paper/2024/hash/2f803abdcad9de35b45d5a656dade45c-Abstract-Datasets_and_Benchmarks_Track.html">打开原始来源</a></div><div class="ref" id="ref-ua"><b>R5 · UASpeech身份核查</b><p>原始2008论文表中F02为构音障碍说话人。报告fresh映射与其冲突，需要回源，不直接从目录名翻转所有标签。</p><a target="_blank" rel="noopener noreferrer" href="https://www.isca-archive.org/interspeech_2008/kim08c_interspeech.pdf">打开原始来源</a></div><div class="ref" id="ref-sdx"><b>R6 · 阶段与接口参照</b><p>SpeechDx作者README公开prep/warm/train/report与编码器元信息。本次借鉴接口思想；本文代码契约、指标政策和CLI是为本项目重新明确的拟实施方案。</p><a target="_blank" rel="noopener noreferrer" href="https://github.com/chai-toronto/SpeechDx/blob/main/README.md">打开原始来源</a></div></section><footer><p>本轮最小完成标准：MDVR与EATD经各自Adapter进入同一个MLP，使用同一个预测表与Evaluator生成两份格式一致的真实报告。换第三个普通分类库，不改Runner和Evaluator。</p><button class="controls" onclick="document.querySelectorAll('details').forEach(x=>x.open=true);window.print()">打印 / 另存为PDF</button></footer></main><a class="top" href="#top">返回目录 ↑</a></body></html>

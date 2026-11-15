@@ -225,6 +225,10 @@ sddbench extract-features --dataset parkinson_kcl --source <KCL_SCAN_ID> \
 3. [docs/dataset_onboarding.md](docs/dataset_onboarding.md)：新增数据集照着做即可，不需要先读完全部数据层代码。
 4. [docs/construction_log.md](docs/construction_log.md)：每个决策"为什么这么做"（D1–D15）。
 5. 网页控制台：参数在 `src/sddbench/web/schema.py` 注册，想知道能调什么看这里。
+6. [docs/roadmap/00_status_review.md](docs/roadmap/00_status_review.md)：现在走到哪、还缺什么、下一步做什么。
+
+> 规划统一放在 `docs/roadmap/`：现状评审、第一实验块、后续实验块。
+> 后面每次开会或加库之前，先看这里再动手。
 
 ---
 
@@ -354,31 +358,22 @@ sddbench serve --paths configs/paths.local.yaml --port 8765
   `subject`（默认）按确认后的说话人隔离；`file` 用于没有说话人元数据的库，
   每条录音自成一组，主评价单位只能用 `recording`，并明确记录"无法排除同一人跨划分"。
   契约 v1.1 用 `primary_unit` 标记主评价单位，榜单不跨单位直接比较。
-- **不做的事**：不自动选观察长度、不自动选采样率、不自动选麦克风、不把目录名当标签、
+- **不做的事**：不自动选观察长度、不自动选采样率、不自动选麦克风、不猜测未声明的目录含义、
   不删除任何"疑似异常"样本。这些都需要人工依据 `report.md` 的决策点拍板。
-- **状态**：阶段0、D1–D12 均"待人工验收"（见 `docs/acceptance_log.md`）。
+  唯一例外是显式声明 `layout: label_folders` 的普通分类库：目录名按 `label_map` 自动成为标签。
+- **状态**：阶段0、D1–D15 均"待人工验收"（见 `docs/acceptance_log.md`）。
   施工细节与命令证据见 `docs/construction_log.md`。
 
 ## 七、下一步
 
-1. 人工验收 D1–D10：对照 `artifacts/inventory/<dataset>/<scan_id>/report.md`、
-   `artifacts/feature_jobs/<job_id>/inspection.md`、
-   `artifacts/prepared/<task_id>/<job_id>/admission.md`、
-   `artifacts/splits/<task_id>/<split_id>/split.md`、
-   `artifacts/runs/<run_id>/report.md`、缓存 `index.csv`、
-   `results_summary/leaderboard.md` 与 `results_summary/aggregates.md` 复核数字与决策点。
-2. 多 seed 与不确定性（D9，已完成）：`aggregate` 读取本地 run 包，输出跨 seed 均值/区间、
-   箱线图、单次运行内的 test 分组 bootstrap 与换划分敏感性表。
-   当前结论：训练 seed 无波动，换划分位移 0.167。
-3. 无说话人数据集支持（D10，已完成）：`grouping: file` + `evaluation.unit: recording`，
-   让只有标签文件夹的库也能走完整流水线（待真实库验证）。
-4. 接入更多数据集（D11）：每个库只需适配器 + 标签复核 + prepared/split ID，
-   再复制一份实验配置；KCL 的标签复核与 ID22 命名问题在接入时综合处理。
-   每个新库都要判断 `grouping`，并至少跑一次多 seed 汇总。
-5. 网页控制台（D12，已完成）：`sddbench serve` 后在浏览器选数据集、看配置、
-   调数据层/特征/划分/模型参数、生成划分、试运行、启动训练、看日志与图表。
-   参数 schema 与 `--set` 共用，生成配置只写入 `configs/experiments/generated/`。
-6. 结果看板打磨（D13）与长期扩展（D14）：批量实验、实验登记、回归烟测、新特征/新模型插槽。
+按**实验块**推进（编号约定：`D` = 施工批次，`E` = 实验块）：
 
-> 完整路线与验收口径见 [docs/roadmap.md](docs/roadmap.md)；
-> 模块与参数说明见 [docs/architecture.md](docs/architecture.md)。
+- 现状与差距：[docs/roadmap/00_status_review.md](docs/roadmap/00_status_review.md)
+- 当前实验块 E1：[docs/roadmap/01_experiment_block_1_benchmark.md](docs/roadmap/01_experiment_block_1_benchmark.md)
+- 后续实验块 E2–E5：[docs/roadmap/02_experiment_blocks_2_plus.md](docs/roadmap/02_experiment_blocks_2_plus.md)
+
+E1 的核心目标：接入 3 个真实数据集、每库 3 个 seed，跑出第一版可比较的基准表，
+并用 `git diff` 证明"新增数据集不改上层代码"。
+
+> 模块与参数说明见 [docs/architecture.md](docs/architecture.md)；
+> 新库接入见 [docs/dataset_onboarding.md](docs/dataset_onboarding.md)。

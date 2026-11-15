@@ -873,3 +873,27 @@ python -m pytest -q        # 76 passed
   缓存 key/dim/meta/index 的身份字段；
 - `tests/test_label_folders.py`：两个标签文件夹从 `stats` 到 `prepare` 全程无复核 CSV，
   以及未映射文件夹阻塞。
+
+## D16（2026-11-15）：平台现状评审与实验块规划
+
+### 目的
+
+D15 之后代码骨架稳定，但"还缺什么、下一步做什么"散落在 README、旧路线图与对话里。
+本次把三份上游设计（产品架构规范 HTML、仓库结构与分阶段施工说明、数据层补充方案）
+与当前实现逐项对照，形成可持续增补的规划目录。
+
+### 交付
+
+- `docs/roadmap/00_status_review.md`：逐项对照表、分维度评分（综合 6.6/10）、
+  9 条被忽略的问题（任务身份非内容寻址、无 suite/plan、多分类缺失、
+  视图只支持单段、阈值配置无效、无解码缓存、失败无分级、UAspeech 标签证据、无实验登记）。
+- `docs/roadmap/01_experiment_block_1_benchmark.md`：第一实验块目标、范围、
+  DoD、W1–W8 工作项与验收、执行顺序、风险。
+- `docs/roadmap/02_experiment_blocks_2_plus.md`：E2 特征/模型扩展、
+  E3 统计与多分类、E4 任务协议扩展、E5 平台化。
+- `docs/roadmap/reference/`：归档上游的规范 HTML 与施工说明，保证规划可追溯。
+- README 增加阅读顺序与实验块入口；旧 `docs/roadmap.md` 标注为历史文档。
+
+### 验证
+
+本次仅文档改动，未触碰代码；`python -m pytest -q` 仍为 76 passed。
