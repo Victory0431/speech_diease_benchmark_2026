@@ -3,6 +3,8 @@
 依据：《仓库独立审计与基准实验推进建议_2026-11-15》，审计快照
 `d0ca5f98ac65bfdb6d8f94ebf1bd8bc53292066f`。
 修复分支：`main`（从 `aac66ed` 起，每批一提交）。
+修复提交：A `e217d3c`；B `2ba17f8`；C `0028bb7`；D `721ad62`；E `5547691`
+（均已推送到 `origin/main`；审计快照 `d0ca5f9` 的历史结果未改动）。
 状态取值：`pending` / `in_progress` / `fixed` / `already_fixed` / `not_reproduced` /
 `blocked_external_evidence`。
 
