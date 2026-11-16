@@ -673,6 +673,28 @@ def cmd_catalog(args) -> int:
     return 0
 
 
+def cmd_plan(args) -> int:
+    """Print the shared execution plan (identities + cache state + next commands).
+
+    Exit 0 when the run is ready, 3 when something must be built first, so
+    scripts can gate on exactly the same decision the web console displays.
+    """
+    from .modeling.plan import describe_plan
+
+    paths = load_paths(args.paths)
+    repo_root = Path(args.repo_root).resolve() if args.repo_root else Path.cwd()
+    try:
+        cfg = load_experiment(args.config)  # same defaults/validation as `run`
+    except ExperimentConfigError as e:
+        raise ConfigError(str(e)) from e
+    plan = describe_plan(cfg, paths["workspace_root"], repo_root, paths_file=args.paths)
+    print(json.dumps(plan, ensure_ascii=False, indent=2, default=str))
+    if plan["ready"]:
+        return 0
+    print("[plan] blocked: " + "; ".join(plan["errors"]), file=sys.stderr)
+    return 3
+
+
 def cmd_serve(args) -> int:
     """D12: local web console (stdlib HTTP server, bind 127.0.0.1 by default)."""
     from .web.server import serve
@@ -912,6 +934,19 @@ def cmd_extract_features(args) -> int:
         print(f"[extract-features] mic filter {args.mic!r}: {len(all_rows)}/{before} rows")
         if not all_rows:
             raise ConfigError(f"--mic {args.mic!r} matched no rows in {files_csv}")
+    if getattr(args, "manifest", None):
+        mdf = pd.read_csv(args.manifest, usecols=["sample_id"])
+        wanted = {str(s) for s in mdf["sample_id"].tolist()}
+        before = len(all_rows)
+        all_rows = [r for r in all_rows if str(r.get(COL_RELATIVE_PATH)) in wanted]
+        present = {str(r.get(COL_RELATIVE_PATH)) for r in all_rows}
+        absent = sorted(wanted - present)
+        print(f"[extract-features] manifest filter: {len(all_rows)}/{before} rows")
+        if absent:
+            raise ConfigError(
+                f"{len(absent)} manifest sample(s) are not decodable rows of scan "
+                f"{args.source}: {absent[:5]}; rescanned content or a different scan "
+                "cannot supply this manifest")
     print(f"[extract-features] source={args.source} rows={len(all_rows)}")
 
     chosen, selection = stratified_sample(all_rows, args.limit)
@@ -1325,6 +1360,9 @@ def build_parser() -> argparse.ArgumentParser:
                     help="feature config yaml (reserved for the MFCC stage)")
     sp.add_argument("--mic", default=None,
                     help="keep only this microphone token before sampling (e.g. M3)")
+    sp.add_argument("--manifest", default=None,
+                    help="restrict rows to the sample_id set of this prepared manifest.csv "
+                         "(the web console uses it so only approved samples are cached)")
     sp.add_argument("--limit", type=int, default=None,
                     help="deterministic stratified sample size (omit for all rows)")
     sp.add_argument("--cache-mode", choices=["run", "shared"], default="run")
@@ -1352,6 +1390,15 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--paths", required=True)
     sp.add_argument("--repo-root", default=None)
     sp.set_defaults(func=cmd_catalog)
+
+    sp = sub.add_parser(
+        "plan",
+        help="show identities, feature-cache state and next commands for an experiment "
+             "(exit 3 when it is not ready to train)")
+    sp.add_argument("--config", required=True)
+    sp.add_argument("--paths", required=True)
+    sp.add_argument("--repo-root", default=None)
+    sp.set_defaults(func=cmd_plan)
 
     sp = sub.add_parser(
         "serve",

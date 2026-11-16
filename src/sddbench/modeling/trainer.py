@@ -121,7 +121,14 @@ def _verify_run_artifacts(out_dir: Path, coverage: dict) -> list[str]:
     return problems
 
 
-def load_run_data(cfg: dict, workspace: Path, repo_root: Path) -> dict:
+def resolve_run_inputs(cfg: dict, workspace: Path, repo_root: Path) -> dict:
+    """Validate + resolve every non-vector input the run depends on.
+
+    This is the single identity gate shared by training (`load_run_data`) and
+    the read-only plan used by the web console / `sddbench plan`: frozen task
+    snapshot, manifest/split content fingerprints, labels, processed rate,
+    feature/preprocess recipe and view fingerprint. It never reads vectors.
+    """
     validate_experiment(cfg)
     task_id = cfg.get("task_id") or f"{cfg['dataset']}_v1"
     prepared_dir = workspace / "prepared" / task_id / cfg["prepared_id"]
@@ -260,35 +267,46 @@ def load_run_data(cfg: dict, workspace: Path, repo_root: Path) -> dict:
     sample_ids = merged["sample_id"].astype(str).tolist()
     source_hashes = {str(s): str(h) for s, h in
                      zip(merged["sample_id"], merged["sha256"])}
-    try:
-        X, cache_info = load_features(workspace, feature_cfg, sample_ids, processed_rate,
-                                      dataset_id=str(cfg["dataset"]),
-                                      source_hashes=source_hashes,
-                                      view_fingerprint=view_fingerprint)
-    except FeatureLoadError as e:
-        raise RunError(str(e)) from e
-
     return {
         "task_id": task_id, "manifest": manifest, "split": split,
-        "merged": merged, "X": X, "cache_info": cache_info,
+        "merged": merged,
         "class_order": class_order, "positive_class": positive,
         "positive_index": class_order.index(positive),
         "sample_rate": processed_rate,
         "original_sample_rates": original_rates,
         "feature_cfg": feature_cfg,
+        "features_rel": cfg["features"]["config"],
         "preprocess_rel": preprocess_rel, "view_fingerprint": view_fingerprint,
         "grouping": grouping,
+        "prepared_dir": prepared_dir,
         "manifest_file": manifest_file, "split_file": split_file,
         "split_dir": split_dir,
         "task_snapshot_file": task_snapshot_file,
+        "admission_file": admission_file,
         "task_cfg": task_cfg,
         "preprocess_cfg": preprocess_cfg,
         "task_hash": task_hash,
         "manifest_fingerprint": manifest_fp,
         "split_fingerprint": split_fp,
+        "sample_ids": sample_ids,
+        "source_hashes": source_hashes,
         "benchmark_eligible": benchmark_eligible,
         "scientific_status": scientific_status,
+        "admitted": admitted,
     }
+
+
+def load_run_data(cfg: dict, workspace: Path, repo_root: Path) -> dict:
+    data = resolve_run_inputs(cfg, workspace, repo_root)
+    try:
+        X, cache_info = load_features(
+            workspace, data["feature_cfg"], data["sample_ids"], data["sample_rate"],
+            dataset_id=str(cfg["dataset"]),
+            source_hashes=data["source_hashes"],
+            view_fingerprint=data["view_fingerprint"])
+    except FeatureLoadError as e:
+        raise RunError(str(e)) from e
+    return {**data, "X": X, "cache_info": cache_info}
 
 
 def _subject_weights(groups: np.ndarray) -> np.ndarray:

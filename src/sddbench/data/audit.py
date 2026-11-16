@@ -90,16 +90,19 @@ def audit_one(root_str: str, rel: str, mode: str, quality_cfg: dict) -> dict:
     )
     if info.warnings:
         out["probe_warnings"] = "; ".join(info.warnings)[:500]
-    if mode == "quick" or info.status != "ok_soundfile":
-        # full mode still decodes ffprobe-only files? No: decode needs a
-        # libsndfile-compatible stream; ffprobe-ok but sf-failed files are
-        # reported as decode_failed candidates for the fallback decoder.
-        if mode == "full" and info.status == "failed":
-            out[COL_DECODE_STATUS] = "failed"
-            out["decode_error"] = "probe failed; no decoder output"
+    if mode == "quick":
+        return out
+    if info.status == "failed":
+        # No decoder input exists: this is "not attempted", not a decode failure.
+        # Keeping the two apart makes the ok/failed/not_attempted counts close.
+        out[COL_DECODE_STATUS] = "not_attempted"
+        out["decode_error"] = "probe failed; decode not attempted"
         return out
 
     if mode == "full":
+        # Probe success (soundfile OR ffprobe-only) does not imply decodability;
+        # `decode` really runs and falls back to ffmpeg for compressed containers.
+
         try:
             dec = decode(path)
         except DecodeError as e:
@@ -112,6 +115,7 @@ def audit_one(root_str: str, rel: str, mode: str, quality_cfg: dict) -> dict:
         out[COL_DECODE_BACKEND] = dec.backend
         out[COL_N_SAMPLES] = int(n)
         out[COL_SAMPLE_RATE] = int(dec.sample_rate)
+        out[COL_CHANNELS] = int(wave.shape[0])
         out[COL_DURATION_DECODED_SEC] = float(n / dec.sample_rate) if dec.sample_rate else None
         out[COL_SHA256] = _sha256(path)
         finite = np.isfinite(wave)

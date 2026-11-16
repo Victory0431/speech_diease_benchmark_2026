@@ -4,11 +4,16 @@ Backend policy (data-layer doc §6): soundfile/libsndfile first; ffprobe/ffmpeg
 fallback with explicit argument arrays (no shell string拼接), timeout, local
 files only. `probe` never changes audio; `decode` returns the REAL sample rate
 (never an assumed 16000), no resampling, no channel folding, no normalization.
+
+Probe and decode are different capabilities: ffprobe can read a header that
+libsndfile cannot decode (e.g. AAC/M4A), so `ok_ffprobe` alone is not "decodable".
+`decode` after an ffprobe-only probe uses ffmpeg and records that backend.
 """
 from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -17,6 +22,7 @@ import numpy as np
 import soundfile as sf
 
 FFPROBE_TIMEOUT_SEC = 30
+FFMPEG_TIMEOUT_SEC = 180
 
 
 class DecodeError(RuntimeError):
@@ -54,20 +60,38 @@ class DecodedAudio:
     warnings: list[str] = field(default_factory=list)
 
 
-def tool_versions() -> dict:
-    ffprobe_version = None
+def _codec_env() -> dict:
+    """Environment for external codec binaries (ffmpeg/ffprobe).
+
+    Parent processes (IDEs, sandboxes) sometimes inject a private C++ runtime
+    through LD_LIBRARY_PATH; that shadows the system libraries and makes a
+    working ffmpeg die with `GLIBCXX_... not found`. Both binaries link their
+    own dependencies, so inherit the environment without it.
+    """
+    env = dict(os.environ)
+    env.pop("LD_LIBRARY_PATH", None)
+    return env
+
+
+def _tool_version(name: str) -> str | None:
     try:
         out = subprocess.run(
-            ["ffprobe", "-version"], capture_output=True, text=True, timeout=10
+            [name, "-version"], capture_output=True, text=True, timeout=10,
+            env=_codec_env(),
         )
-        if out.returncode == 0:
-            ffprobe_version = out.stdout.splitlines()[0].strip()
+        if out.returncode == 0 and out.stdout.strip():
+            return out.stdout.splitlines()[0].strip()
     except (OSError, subprocess.TimeoutExpired):
         pass
+    return None
+
+
+def tool_versions() -> dict:
     return {
         "soundfile": sf.__version__,
         "libsndfile": sf.__libsndfile_version__,
-        "ffprobe": ffprobe_version,
+        "ffprobe": _tool_version("ffprobe"),
+        "ffmpeg": _tool_version("ffmpeg"),
     }
 
 
@@ -81,7 +105,8 @@ def _probe_ffprobe(path: Path) -> AudioInfo:
         "-of", "json", str(path),
     ]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=FFPROBE_TIMEOUT_SEC)
+        proc = subprocess.run(cmd, capture_output=True, text=True,
+                              timeout=FFPROBE_TIMEOUT_SEC, env=_codec_env())
     except FileNotFoundError:
         return AudioInfo(status="failed", backend="ffprobe",
                          warnings=["ffprobe executable not found"])
@@ -154,12 +179,60 @@ def probe(path: Path) -> AudioInfo:
     )
 
 
+def _decode_ffmpeg(path: Path, soundfile_error: Exception) -> DecodedAudio:
+    """Real decode fallback for containers libsndfile cannot read (e.g. AAC/M4A).
+
+    ffprobe supplies the stream geometry (rate/channels), ffmpeg writes raw
+    little-endian float32 to stdout at the file's own rate (no -ar resampling).
+    Any failure is explicit: a successful probe never implies a successful decode.
+    """
+    info = _probe_ffprobe(path)
+    if info.status != "ok_ffprobe":
+        detail = "; ".join(info.warnings) or "probe failed"
+        raise DecodeError(
+            f"soundfile: {type(soundfile_error).__name__}: {soundfile_error}; "
+            f"ffmpeg fallback unavailable: {detail}")
+    if not info.sample_rate or not info.channels:
+        raise DecodeError(
+            "ffmpeg fallback needs sample_rate and channels from ffprobe, got "
+            f"{info.sample_rate!r}/{info.channels!r}")
+    cmd = [
+        "ffmpeg", "-nostdin", "-v", "error", "-i", str(path),
+        "-map", "0:a:0", "-f", "f32le", "-acodec", "pcm_f32le", "pipe:1",
+    ]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, timeout=FFMPEG_TIMEOUT_SEC,
+                              env=_codec_env())
+    except FileNotFoundError as e:
+        raise DecodeError(
+            f"soundfile: {type(soundfile_error).__name__}: {soundfile_error}; "
+            "ffmpeg is not installed for the compressed-format fallback") from e
+    except subprocess.TimeoutExpired as e:
+        raise DecodeError(
+            f"ffmpeg decode timeout after {FFMPEG_TIMEOUT_SEC}s") from e
+    stderr = proc.stderr.decode("utf-8", errors="replace").strip()
+    if proc.returncode != 0 or not proc.stdout:
+        raise DecodeError(
+            f"ffmpeg could not decode (rc={proc.returncode}): {stderr[:500] or 'empty output'}")
+    channels = int(info.channels)
+    frame_bytes = 4 * channels
+    if len(proc.stdout) % frame_bytes:
+        raise DecodeError(
+            f"ffmpeg output ({len(proc.stdout)} bytes) is not a whole number of "
+            f"{channels}-channel frames")
+    wave = np.frombuffer(proc.stdout, dtype="<f4").reshape(-1, channels).T
+    version = _tool_version("ffmpeg") or "unknown"
+    return DecodedAudio(waveform=np.ascontiguousarray(wave, dtype=np.float32),
+                        sample_rate=int(info.sample_rate),
+                        backend=f"ffmpeg({version})")
+
+
 def decode(path: Path) -> DecodedAudio:
     """Decode to float32 [channels, samples] at the file's REAL sample rate."""
     try:
         data, sr = sf.read(str(path), dtype="float32", always_2d=True)
     except Exception as e:
-        raise DecodeError(f"{type(e).__name__}: {e}") from e
+        return _decode_ffmpeg(path, e)
     if sr is None or sr <= 0:
         raise DecodeError(f"invalid sample rate from decoder: {sr!r}")
     wave = np.ascontiguousarray(data.T)  # [C, N]

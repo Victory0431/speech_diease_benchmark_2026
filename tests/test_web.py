@@ -97,6 +97,8 @@ def test_schema_validates_and_covers_pipeline():
     for required in ("features.n_mfcc", "preprocess.observe_seconds",
                      "split.seed", "training.seed", "evaluation.unit"):
         assert required in keys
+    # torchaudio MFCC keeps c0; the UI must not expose a switch we cannot honour.
+    assert "features.include_c0" not in keys
     assert validate_values({"features.n_mfcc": 13})["features.n_mfcc"] == 13
     with pytest.raises(ValueError):
         validate_values({"features.n_mfcc": 999})
@@ -182,6 +184,25 @@ def test_server_exposes_schema_catalog_and_saves_experiment(tmp_path):
         assert status == 201
         assert saved["feature_dim"] == 26
         assert (repo / saved["paths"]["experiment"]).is_file()
+        # The console reports why the run is not ready at save time.
+        assert saved["plan"]["ready"] is False
+        assert saved["plan"]["errors"]
+
+        status, plan = post("/api/plan", {
+            "dataset": "demo", "prepared_id": "job1", "split_id": "s1",
+            "experiment_id": "web_demo_test",
+            "values": {"features.n_mfcc": 13, "model.dropout": 0.3},
+        })
+        assert status == 200 and plan["plan"]["ready"] is False
+
+        with pytest.raises(urllib.error.HTTPError) as exc:
+            post("/api/run", {
+                "dataset": "demo", "prepared_id": "job1", "split_id": "s1",
+                "experiment_id": "web_demo_test", "values": {},
+            })
+        assert exc.value.code == 409
+        body = json.loads(exc.value.read().decode("utf-8"))
+        assert body["plan"]["ready"] is False
 
         with pytest.raises(urllib.error.HTTPError) as exc:
             post("/api/experiment", {

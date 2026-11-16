@@ -17,10 +17,10 @@
 | F05 | P0 | aggregate 签名遗漏前端/准备版本/类别 | fixed | D | 聚合键覆盖 task/prepared/view/feature/labels/threshold；同 seed 记 attempt |
 | F06 | P1 | 阈值不生效；配置校验不统一 | fixed | B | `binary_threshold` 全链路生效；严格校验 |
 | F07 | P1 | 训练用源 Hz 找缓存，重采样接不通 | fixed | C | 缓存/加载/训练统一用 processed Hz，覆盖 16k→8k、44.1k→16k |
-| F08 | P1 | 网页改特征只写 YAML，C0 开关不可用 | in_progress | E | 待补 |
+| F08 | P1 | 网页改特征只写 YAML，C0 开关不可用 | fixed | E | 网页/CLI 共用 `plan`；保存即显示缓存缺失；`/api/features` 显式建缓存；C0 开关移除 |
 | F09 | P0 | run 太晚建立、缺快照、`last.pt` 语义不真 | fixed | D | 开始即建 run；失败/中断留痕；true last 权重；产物+覆盖校验后才 completed |
 | F10 | P1 | `ratio_longer_than_L` 漏除样本数 | fixed | B | 比例已除以 n，并限制在 [0,1] |
-| F11 | P1 | 文档称 ffmpeg 解码后备，实际只有 probe | in_progress | E | 待补 |
+| F11 | P1 | 文档称 ffmpeg 解码后备，实际只有 probe | fixed | E | `decode` 真跑 ffmpeg 后备并记 backend；probe≠decode；统计闭合 |
 | F12 | P1 | 人员权重在全部集合上归一 | fixed | B | 权重只在 train 内计算与归一 |
 
 ## 批次 A（F01、F02）
@@ -272,7 +272,102 @@ sddbench extract-features \
 
 ## 批次 E（F08、F11）
 
-待补。
+### F08 网页与 CLI 的 plan / 校验 / 特征构建闭环
+
+- **复现**：
+  - `web/schema.py` 暴露 `features.include_c0`（默认 true，帮助写“关闭后第一个系数
+    置零”），而 `mfcc.normalize_feature_config` 强制 `include_c0 is True`，关闭必报错：
+    网页给出了一个不可用的可操作选项；
+  - `/api/run` 只写 YAML 就直接起训练子进程；改 MFCC/采样率/裁剪后唯一反馈是
+    训练日志里“feature cache not found”，网页事先看不到缓存失效；
+  - 网页与 CLI 各自检查配置，网页无法证明训练时解析的身份与 CLI 一致。
+- **修复**：
+  - 新增 `modeling/plan.py::describe_plan`（只读）：调用与训练相同的
+    `resolve_run_inputs`（task 快照、manifest/split 内容指纹、标签、处理 Hz、
+    view 指纹）和共享的 `inspect_cache`，返回
+    `identities / feature{status,reason,cache_dir,feature_hash,dim,n_missing} /
+    actions`；缓存缺失、legacy、incompatible、partial 都给出原因与下一步命令；
+  - `modeling/features.py` 拆出 `_resolve_cache` + `inspect_cache`：
+    训练加载与 plan 共用同一套身份/覆盖检查，网页不会宣称 loader 会拒绝的
+    “ready”；
+  - CLI 新增 `sddbench plan --config ... --paths ...`：输出同一份 JSON；
+    ready 退出 0，需先构建退出 3，脚本可据此门禁；
+  - `extract-features` 新增 `--manifest <prepared manifest.csv>`：只对已准入的
+    sample_id 建缓存（网页触发的构建不会把整库扫一遍），清单缺失的样本明确报错；
+  - 网页：
+    - `/api/experiment` 保存后直接返回 plan；
+    - 新增 `/api/plan`（只读，不写文件）；
+    - 新增 `/api/features`：保存配置后以子进程运行
+      `extract-features --cache-mode shared --manifest ...`，作为 job 轮询，
+      完成后自动刷新 plan；
+    - `/api/run` 在 plan 未 ready 时返回 **409 + plan**（试运行仍可执行）；
+    - “模型与训练”页展示执行计划、缓存目录/维度/view 指纹/下一步命令；
+    - 移除 `features.include_c0` 字段（torchaudio MFCC 固定包含 c0，不再承诺
+      无法实现的行为）。
+- **测试**：`tests/test_plan.py`
+  - 缓存与配方一致 → `ready`、dim/Hz/样本数/指纹正确；
+  - 改 `n_mfcc` → 同一旧缓存不再算 ready，报 `missing`，给出含
+    `extract-features/--manifest/--cache-mode shared` 的命令；
+  - CLI `plan` 退出码 0/3 与网页判定一致。
+  `tests/test_web.py`：schema 不含 `include_c0`；保存返回 blocked plan；
+  `/api/plan` 只读；`/api/run` 返回 409 且带 plan。
+  `tests/test_feature_cache.py`：`--manifest` 只构建清单内样本；清单样本不在
+  scan 中时返回非 0，而不是静默少建。
+- **历史结果影响**：无。旧 run 不受影响；旧缓存若与新配方不符会在 plan 中显示为
+  `missing/incompatible`，不会被训练误用。网页生成的配置仍落到
+  `configs/experiments/generated/`，与 CLI 读取的是同一文件。
+
+### F11 probe 与 decode 能力分离、ffmpeg 真实后备
+
+- **复现**：`decoders.decode` 只调用 soundfile；`audit_one` 对
+  `ok_ffprobe` 文件从不尝试解码，`decode_status=not_attempted`；文档却写着
+  “ffprobe/ffmpeg 后备”。可达成的效果是“探针成功”，不是“可解码”。
+  probe 失败的文件还被记成 `decode_status=failed`，使 ok/failed/not_attempted
+  统计口径不闭合。
+- **修复**：
+  - `decode` 在 soundfile 失败后走 `_decode_ffmpeg`：先 `ffprobe` 取真实
+    sample_rate/channels，再以 `ffmpeg -nostdin -v error -i <file>
+    -map 0:a:0 -f f32le -acodec pcm_f32le pipe:1` 解码，**不重采样**，
+    以 ffprobe 的通道数 reshape 成 `[C, N] float32`；
+  - backend 记为 `ffmpeg(<version>)`；ffmpeg 缺失、超时、空输出、非整帧字节数
+    都抛 `DecodeError`，不会把“探针成功”当成“解码成功”；
+  - `tool_versions()` 同时记录 `ffmpeg`；外部编解码进程使用去掉
+    `LD_LIBRARY_PATH` 的环境，避免父进程注入的私有 C++ 运行时导致
+    `GLIBCXX_... not found`；
+  - `audit_one`：quick 模式只 probe；full 模式对所有 probe 成功
+    （`ok_soundfile` 或 `ok_ffprobe`）的文件真实调用 `decode`；probe 失败改记
+    `decode_status=not_attempted` + `decode_error="probe failed; decode not attempted"`；
+  - 统计新增 `decode_not_attempted/decode_unclassified`，
+    每个目录组细分 ok/failed/not_attempted；数据集报告新增“未尝试”列并展示
+    ffmpeg 版本，`ok+failed+not_attempted == audio_candidates` 可核对。
+- **测试**：`tests/test_format_fallback.py`（全部为合成音频）
+  - 合成 WAV → ffmpeg 编码 AAC/M4A：`probe=ok_ffprobe`；
+  - `decode` 成功，backend 为 `ffmpeg(...)`，16 kHz 原生速率、float32、近似原时长；
+  - `audit_one(full)` 对该文件 `decode_status=ok` 且记录 ffmpeg backend；
+  - 损坏文件的 decode 明确抛 `DecodeError`；
+  - 一条 WAV + 一条损坏文件（+ 可选 M4A）的统计满足三态闭合，probe 失败记为
+    not_attempted。
+  `tests/test_dataset_stats.py` 相应更新为“probe failed → not_attempted”。
+- **历史结果影响**：旧 scan 里 ffprobe-only 文件的 `decode_status` 仍是
+  `not_attempted`（当时确实没解码），不篡改历史 CSV；需要真实音频事实时应重新
+  `audit`（full）。旧统计数字不含 `decode_not_attempted`，按旧口径解读；
+  新统计不覆盖旧文件。
+
+### 新增命令与最短验证
+
+```bash
+# 训练前查看同一份计划（0=可训练，3=需先构建）
+sddbench plan --config configs/experiments/<exp>.yaml --paths configs/paths.local.yaml
+
+# 只构建已准入清单的特征（网页“构建特征缓存”按钮执行的就是这条）
+sddbench extract-features --dataset <ds> --source <scan_id> \
+  --preprocess <preprocess.yaml> --features <features.yaml> \
+  --manifest <workspace>/prepared/<task>/<prep>/manifest.csv \
+  --cache-mode shared --paths configs/paths.local.yaml
+
+# 格式能力验证（合成音频）
+python -m pytest -q tests/test_format_fallback.py tests/test_plan.py
+```
 
 ## 历史结果处理清单
 

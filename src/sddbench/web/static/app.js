@@ -10,6 +10,7 @@ const S = {
   jobId: null,
   pollTimer: null,
   selectedRun: null,
+  plan: null,
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -30,7 +31,12 @@ async function api(path, options = {}) {
   const text = await res.text();
   let data = {};
   try { data = text ? JSON.parse(text) : {}; } catch (e) { data = { error: text }; }
-  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  if (!res.ok) {
+    const err = new Error(data.error || `HTTP ${res.status}`);
+    err.status = res.status;
+    err.data = data;
+    throw err;
+  }
   return data;
 }
 
@@ -102,15 +108,18 @@ function bindGlobal() {
   $('#panel').addEventListener('input', onFieldChange);
   $('#refresh-btn').onclick = refreshCatalog;
   $('#save-btn').onclick = saveOnly;
+  $('#features-btn').onclick = buildFeatures;
   $('#dry-btn').onclick = () => launchRun(true);
   $('#train-btn').onclick = () => launchRun(false);
   $('#log-close').onclick = () => $('#logbar').classList.add('hidden');
   $('#prepared-select').onchange = (e) => {
     S.prepared = e.target.value;
+    S.plan = null;
     renderPanel();
   };
   $('#split-select').onchange = (e) => {
     S.split = e.target.value;
+    S.plan = null;
     const split = (S.dataset.splits || []).find((s) => s.split_id === S.split);
     if (split) toast(`划分 ${split.split_id} · seed ${split.seed}`);
     renderPanel();
@@ -132,6 +141,9 @@ function onFieldChange(event) {
       el.textContent = `${2 * Number(S.values[key] || 0)} 维/窗口`;
     });
   }
+  // Changing the observation window or the feature recipe changes the cache key:
+  // the previous plan is no longer evidence, so require a fresh check.
+  if (field.impact === 'features' || field.impact === 'windows') S.plan = null;
 }
 
 /* ------------------------------------------------------------ dataset */
@@ -159,6 +171,7 @@ function selectDataset(id) {
   S.split = S.dataset.defaults.__split_id
     || (S.dataset.splits[0] ? S.dataset.splits[0].split_id : '');
   S.selectedRun = S.dataset.runs[0] ? S.dataset.runs[0].run_id : null;
+  S.plan = null;
   $('#experiment-id').value = '';
   renderDatasetList();
   renderHeader();
@@ -257,8 +270,13 @@ function renderOverview() {
       ds.splits.length ? `${ds.splits.length} 个划分 · 最新 seed ${esc(lastSplit.seed)}`
         : '还没有划分。',
       `sddbench split --dataset ${ds.id} --prepared <prepared_id> --seed 0 --paths configs/paths.local.yaml`),
-    check(true, '特征缓存', '缓存键 = 特征配置 + 采样率 + 窗口指纹；改数据/特征参数后必须重算。',
-      `sddbench extract-features --dataset ${ds.id} --source <scan_id> --preprocess <yaml> --features <yaml> --paths configs/paths.local.yaml`),
+    check(!!(S.plan && S.plan.ready), '特征缓存',
+      S.plan
+        ? (S.plan.ready
+            ? `已就绪 · ${S.plan.feature.dim} 维 · ${S.plan.feature.cache_dir}`
+            : `未就绪：${(S.plan.errors || []).join('；')}`)
+        : '尚未检查缓存身份；点“保存并检查”或“构建特征缓存”。',
+      'sddbench plan --config <experiment.yaml> --paths configs/paths.local.yaml'),
     check(ds.runs.length > 0, '训练与结果',
       ds.runs.length ? `${ds.runs.length} 个 run · 最新 bAcc ${fmt(lastRun.balanced_accuracy)}（${esc(lastRun.primary_unit)}）`
         : '还没有训练结果。',
@@ -389,9 +407,41 @@ function renderSplit() {
 }
 
 function renderModel() {
-  return renderSection(sectionById('model'))
+  return renderPlanBlock()
+    + renderSection(sectionById('model'))
     + renderSection(sectionById('training'))
     + renderSection(sectionById('evaluation'));
+}
+
+function renderPlanBlock() {
+  const plan = S.plan;
+  if (!plan) {
+    return `<div class="block">
+      <div class="block-head"><h2>执行计划</h2>
+        <span class="desc">网页与 CLI 共用同一份校验/身份判定。</span></div>
+      <div class="block-body"><div class="empty">尚未检查。点“保存并检查”或“构建特征缓存”即可看到缓存是否失效。</div></div>
+    </div>`;
+  }
+  const f = plan.feature || {};
+  const ids = plan.identities || {};
+  const rows = [
+    ['状态', plan.ready ? 'ready · 可以直接训练' : `blocked · ${(plan.errors || []).join('；')}`],
+    ['样本 / 隔离单位', `${ids.n_samples ?? '—'} 条 · ${ids.grouping ?? '—'}`],
+    ['处理后采样率', `${ids.processed_sample_rate ?? '—'} Hz（原始 ${(ids.original_sample_rates || []).join(' / ') || '—'} Hz）`],
+    ['特征缓存状态', `${f.status ?? '—'}${f.reason ? ' · ' + f.reason : ''}`],
+    ['特征维度 / 目录', `${f.dim ?? '—'} 维 · ${f.cache_dir ?? '—'}`],
+    ['缓存覆盖', f.status === 'ready' ? `${f.n_indexed}/${f.n_expected} 个样本` : `${f.n_missing ?? '—'} 个缺失`],
+    ['view 指纹', f.view_fingerprint ?? '—'],
+  ].map(([k, v]) => `<tr><td>${esc(k)}</td><td class="mono">${esc(v)}</td></tr>`).join('');
+  const action = (plan.actions || []).find((a) => a.action === 'build_features');
+  return `<div class="block">
+    <div class="block-head"><h2>执行计划</h2>
+      <span class="desc">缓存键覆盖特征配置、处理采样率、view 指纹与源内容哈希。</span></div>
+    <div class="block-body">
+      <div class="table-wrap"><table><tbody>${rows}</tbody></table></div>
+      ${action ? `<div class="impact">下一步必须先构建特征：<br><code>${esc(action.shell)}</code></div>` : ''}
+    </div>
+  </div>`;
 }
 
 function table(columns, rows, emptyText) {
@@ -517,7 +567,52 @@ async function saveOnly() {
       method: 'POST',
       body: JSON.stringify(buildBody()),
     });
-    toast(`配置已写入 ${res.paths.experiment} · 特征 ${res.feature_dim} 维`);
+    S.plan = res.plan;
+    renderPanel();
+    if (res.plan.ready) {
+      toast(`配置已写入 ${res.paths.experiment} · 特征 ${res.feature_dim} 维 · 缓存就绪`);
+    } else {
+      toast(`配置已写入，但还不能训练：${(res.plan.errors || []).join('；')}`, true);
+    }
+  } catch (err) {
+    toast(err.message, true);
+  }
+}
+
+async function buildFeatures() {
+  if (!checkBinding()) return;
+  const btn = $('#features-btn');
+  if (btn) btn.disabled = true;
+  try {
+    const res = await api('/api/features', {
+      method: 'POST',
+      body: JSON.stringify(buildBody()),
+    });
+    S.plan = res.plan || S.plan;
+    if (res.skipped) {
+      toast('特征缓存已就绪，无需重建');
+      renderPanel();
+      return;
+    }
+    toast('开始在后台构建特征缓存');
+    openLog(res.job);
+    pollJob(res.job.job_id);
+  } catch (err) {
+    toast(err.message, true);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function refreshPlan() {
+  if (!S.dataset || !S.prepared || !S.split) return;
+  try {
+    const res = await api('/api/plan', {
+      method: 'POST',
+      body: JSON.stringify(buildBody()),
+    });
+    S.plan = res.plan;
+    renderPanel();
   } catch (err) {
     toast(err.message, true);
   }
@@ -531,12 +626,19 @@ async function launchRun(dryRun) {
       body: JSON.stringify({ ...buildBody(), dry_run: dryRun }),
     });
     const saved = res.saved;
+    S.plan = saved.plan || S.plan;
     toast(`配置 ${saved.paths.experiment} · 特征 ${saved.feature_dim} 维 · ${
       dryRun ? '试运行' : '开始训练'}`);
     openLog(res.job);
     pollJob(res.job.job_id);
   } catch (err) {
     toast(err.message, true);
+    // A 409 carries the plan, so the cache-missing reason is visible immediately.
+    if (err.data && err.data.plan) {
+      S.plan = err.data.plan;
+      S.tab = 'model';
+      renderPanel();
+    }
   }
 }
 
@@ -623,6 +725,11 @@ async function pollJob(jobId, attempt = 0) {
       return;
     }
     if (job.status === 'completed') {
+      if (job.kind === 'features') {
+        toast('特征缓存构建完成');
+        await refreshPlan();
+        return;
+      }
       toast(job.run_id ? `训练完成：${job.run_id}` : '试运行通过');
       S.selectedRun = job.run_id || S.selectedRun;
       await refreshCatalog(false);

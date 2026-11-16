@@ -3,8 +3,13 @@
 Only Python's standard library is used.  The server is read-mostly:
 
 * GET endpoints expose the schema and the artifact catalog;
-* POST /api/experiment writes YAML under ``configs/experiments/generated/``;
-* POST /api/run launches the existing ``sddbench run`` CLI in a subprocess;
+* POST /api/experiment writes YAML under ``configs/experiments/generated/`` and
+  returns the shared plan (identities + feature-cache state + next command);
+* POST /api/plan returns the same plan without writing anything;
+* POST /api/features builds the feature cache through the existing
+  ``sddbench extract-features`` CLI (a job, not an inline request);
+* POST /api/run launches the existing ``sddbench run`` CLI in a subprocess and
+  refuses (409) exactly when the plan is not ready;
 * POST /api/split runs ``sddbench split`` synchronously (it is fast).
 
 It binds to 127.0.0.1 by default and has no authentication: do not expose it
@@ -26,6 +31,7 @@ from urllib.parse import unquote, urlparse
 
 from ..config import ConfigError, load_paths
 from ..features.registry import feature_dim
+from ..modeling.plan import describe_plan
 from .catalog import build_catalog, find_dataset
 from .schema import build_configs, get_schema, write_configs
 
@@ -33,6 +39,14 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 SAFE_ID = re.compile(r"^[A-Za-z0-9_.+-]+$")
 MEDIA_NAME = re.compile(r"^[A-Za-z0-9_.+-]+\.png$")
 MAX_BODY = 2 * 1024 * 1024
+
+
+class PlanBlocked(RuntimeError):
+    """Raised when a training request reaches the server before the plan is ready."""
+
+    def __init__(self, plan: dict):
+        self.plan = plan
+        super().__init__("; ".join(plan.get("errors") or ["run is not ready"]))
 
 
 def _now() -> str:
@@ -56,26 +70,35 @@ class JobManager:
         self._lock = threading.Lock()
 
     def start(self, config_path: Path, dry_run: bool) -> dict:
-        job_id = f"{_stamp()}_{uuid.uuid4().hex[:6]}"
-        log_path = self.jobs_dir / f"{job_id}.log"
-        job = {
-            "job_id": job_id,
-            "kind": "run",
-            "dry_run": dry_run,
-            "config_path": str(config_path.relative_to(self.repo_root)),
-            "status": "running",
-            "returncode": None,
-            "run_id": None,
-            "started_at": _now(),
-            "finished_at": None,
-            "log_path": str(log_path),
-        }
         cmd = [sys.executable, "-u", "-m", "sddbench.cli", "run",
                "--config", str(config_path),
                "--paths", str(self.paths_file),
                "--repo-root", str(self.repo_root)]
         if dry_run:
             cmd.append("--dry-run")
+        return self.start_command(cmd, "run", {
+            "dry_run": dry_run,
+            "config_path": str(config_path.relative_to(self.repo_root)),
+        })
+
+    def start_features(self, command: list[str]) -> dict:
+        """Build the feature cache through the same CLI the user would run."""
+        return self.start_command(list(command), "features", {})
+
+    def start_command(self, cmd: list[str], kind: str, extra: dict) -> dict:
+        job_id = f"{_stamp()}_{uuid.uuid4().hex[:6]}"
+        log_path = self.jobs_dir / f"{job_id}.log"
+        job = {
+            "job_id": job_id,
+            "kind": kind,
+            "status": "running",
+            "returncode": None,
+            "run_id": None,
+            "started_at": _now(),
+            "finished_at": None,
+            "log_path": str(log_path),
+            **extra,
+        }
         log_file = log_path.open("w", encoding="utf-8")
         log_file.write(f"$ {' '.join(cmd)}\n")
         log_file.flush()
@@ -160,7 +183,8 @@ class AppState:
             return self._catalog
 
     # ------------------------------------------------------------ actions
-    def save_experiment(self, body: dict) -> dict:
+    def _resolve_experiment(self, body: dict) -> dict:
+        """Shared validation/config resolution for plan, save and build-features."""
         dataset_id = str(body.get("dataset") or "")
         catalog = self.catalog(force=True)
         dataset = find_dataset(catalog, dataset_id)
@@ -195,13 +219,28 @@ class AppState:
             prepared_id, split_id, values)
         if dataset["grouping"] == "file" and experiment["evaluation"]["unit"] != "recording":
             raise ValueError("grouping=file 时评价单位必须是 recording")
-        paths = write_configs(self.repo_root, experiment, preprocess, features)
         return {
+            "dataset_id": dataset_id,
+            "dataset": dataset,
+            "prepared": prepared,
+            "split": split,
             "experiment_id": experiment_id,
-            "paths": paths,
-            "config": experiment,
-            "feature_dim": feature_dim(features),
-            "primary_unit": experiment["evaluation"]["unit"],
+            "experiment": experiment,
+            "preprocess": preprocess,
+            "features": features,
+        }
+
+    def _plan(self, experiment: dict) -> dict:
+        return describe_plan(experiment, self.workspace, self.repo_root,
+                             paths_file=self.paths_file)
+
+    def _summary(self, resolved: dict) -> dict:
+        prepared, split = resolved["prepared"], resolved["split"]
+        return {
+            "experiment_id": resolved["experiment_id"],
+            "config": resolved["experiment"],
+            "feature_dim": feature_dim(resolved["features"]),
+            "primary_unit": resolved["experiment"]["evaluation"]["unit"],
             "prepared": {
                 "n_samples": (prepared.get("counts") or {}).get("n_manifest"),
                 "n_groups": (prepared.get("counts") or {}).get("n_groups"),
@@ -212,6 +251,33 @@ class AppState:
                 "by_split": (split.get("summary") or {}).get("by_split"),
             },
         }
+
+    def save_experiment(self, body: dict) -> dict:
+        resolved = self._resolve_experiment(body)
+        paths = write_configs(self.repo_root, resolved["experiment"],
+                              resolved["preprocess"], resolved["features"])
+        plan = self._plan(resolved["experiment"])
+        return {**self._summary(resolved), "paths": paths, "plan": plan}
+
+    def plan_experiment(self, body: dict) -> dict:
+        """Read-only: same configs/identities as save, nothing written."""
+        resolved = self._resolve_experiment(body)
+        return {**self._summary(resolved), "plan": self._plan(resolved["experiment"])}
+
+    def build_features(self, body: dict) -> dict:
+        """Save the configs, then run the exact extract-features action in a job."""
+        saved = self.save_experiment(body)
+        plan = saved["plan"]
+        if plan["ready"]:
+            return {"skipped": True, "reason": "feature cache already ready",
+                    "experiment_id": saved["experiment_id"], "plan": plan}
+        action = next((a for a in plan["actions"]
+                       if a.get("action") == "build_features"), None)
+        if not action:
+            raise ValueError("cannot build features: " + "; ".join(plan["errors"]))
+        job = self.jobs.start_features(action["command"])
+        return {"job": job, "experiment_id": saved["experiment_id"],
+                "paths": saved["paths"], "plan": plan}
 
     def create_split(self, body: dict) -> dict:
         dataset_id = str(body.get("dataset") or "")
@@ -348,16 +414,27 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/experiment":
                 self._json(self.app.save_experiment(body), 201)
                 return
+            if path == "/api/plan":
+                self._json(self.app.plan_experiment(body))
+                return
+            if path == "/api/features":
+                self._json(self.app.build_features(body), 201)
+                return
             if path == "/api/run":
                 saved = self.app.save_experiment(body)
+                dry_run = bool(body.get("dry_run"))
+                if not dry_run and not saved["plan"]["ready"]:
+                    raise PlanBlocked(saved["plan"])
                 config_path = (self.app.repo_root / saved["paths"]["experiment"]).resolve()
-                job = self.app.jobs.start(config_path, bool(body.get("dry_run")))
+                job = self.app.jobs.start(config_path, dry_run)
                 self._json({"job": job, "saved": saved}, 201)
                 return
             if path == "/api/split":
                 self._json(self.app.create_split(body), 201)
                 return
             self._json({"error": "not found"}, 404)
+        except PlanBlocked as exc:
+            self._json({"error": str(exc), "plan": exc.plan}, 409)
         except (ValueError, ConfigError) as exc:
             self._json({"error": str(exc)}, 400)
         except subprocess.TimeoutExpired:

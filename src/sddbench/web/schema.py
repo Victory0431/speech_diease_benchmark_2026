@@ -90,8 +90,8 @@ SECTIONS = [
             _f("features.f_max_hz", "最高频率 (Hz)", "float", None,
                impact="features", nullable=True, minimum=100.0, maximum=24000.0,
                help="仅 fixed 时生效。"),
-            _f("features.include_c0", "包含 C0", "bool", True,
-               impact="features", help="关闭后第一个系数置零。"),
+            # include_c0 is intentionally absent: torchaudio's MFCC always keeps
+            # c0, so exposing a switch would promise a behaviour we do not have.
         ],
     },
     {

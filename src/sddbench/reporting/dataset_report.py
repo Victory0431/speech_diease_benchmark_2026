@@ -153,11 +153,13 @@ def build_report(scan_dir: Path, dataset_id: str) -> Path:
     md.append(f"- 开始: {meta.get('started_at')}｜结束: {meta.get('finished_at')}")
     md.append(f"- 工具: soundfile {meta.get('tools', {}).get('soundfile')} "
               f"(libsndfile {meta.get('tools', {}).get('libsndfile')})｜"
-              f"ffprobe: {meta.get('tools', {}).get('ffprobe')}")
+              f"ffprobe: {meta.get('tools', {}).get('ffprobe')}｜"
+              f"ffmpeg: {meta.get('tools', {}).get('ffmpeg')}")
     md.append(f"- 目录指纹: `{meta.get('directory_fingerprint', '')[:16]}…`")
     md.append(f"- 覆盖: 扫描发现 {counts['total_discovered']} 文件；候选音频 "
               f"{counts['audio_candidates']}；probe OK {counts['probe_ok']}；"
-              f"full 解码成功 {counts['decoded_ok']}；失败 {counts['decode_failed']}")
+              f"full 解码成功 {counts['decoded_ok']}；失败 {counts['decode_failed']}；"
+              f"未尝试 {counts.get('decode_not_attempted', 0)}（三者之和 = 候选音频）")
     md.append("")
     md.append("**这是技术统计报告，不构成任何标签核验或疾病判断。**")
     md.append("")
@@ -200,10 +202,11 @@ def build_report(scan_dir: Path, dataset_id: str) -> Path:
 
     md.append("## 4. 分组概览（directory_group 是目录事实，不是确认标签）")
     md.append("")
-    md.append("| directory_group | 文件数 | 解码OK | 解码失败 | 人数 | 中位时长(s) |")
-    md.append("| --- | --- | --- | --- | --- | --- |")
+    md.append("| directory_group | 文件数 | 解码OK | 解码失败 | 未尝试 | 人数 | 中位时长(s) |")
+    md.append("| --- | --- | --- | --- | --- | --- | --- |")
     for g, v in statistics["groups"]["by_directory_group"].items():
         md.append(f"| {g} | {v['n_files']} | {v['n_decoded_ok']} | {v['n_decode_failed']} | "
+                  f"{v.get('n_decode_not_attempted', 0)} | "
                   f"{v['n_speakers']} | {_fmt(v['duration_sec'].get('p50'))} |")
     md.append("")
     md.append("### 词项类别（文件命名 token 统计）")

@@ -76,4 +76,7 @@ def test_audit_one_corrupt_file_fails_cleanly(synth_root):
     cfg = {"near_full_threshold": 0.99, "short_duration_sec": 0.1}
     res = audit_one(str(synth_root), "Healthy/BAD_B1_C1_M2.wav", "full", cfg)
     assert res["probe_status"] == "failed"
-    assert res[COL_DECODE_STATUS] == "failed"
+    # No decoder input exists, so the decode stage is "not attempted" (not a
+    # decode failure); this keeps ok + failed + not_attempted == candidates.
+    assert res[COL_DECODE_STATUS] == "not_attempted"
+    assert res["decode_error"].startswith("probe failed")

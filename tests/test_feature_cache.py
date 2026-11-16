@@ -216,6 +216,41 @@ def test_cli_computes_features_and_reuses_cache(scan_workspace, tmp_path, monkey
     assert job4["feature"]["n_from_cache"] == 0
 
 
+def test_cli_manifest_filter_builds_only_approved_rows(scan_workspace, tmp_path, monkeypatch):
+    """The web console builds exactly the approved manifest, not the whole scan."""
+    workspace, paths_file, _ = scan_workspace
+    monkeypatch.chdir(tmp_path)
+    wanted = ["Disorder/CF02_B1_C1_M2.wav", "Healthy/M01_B2_CW11_M5.wav"]
+    manifest = tmp_path / "manifest.csv"
+    pd.DataFrame({"sample_id": wanted}).to_csv(manifest, index=False)
+    rc = main([
+        "extract-features", "--dataset", "uaspeech", "--source", "scan1",
+        "--preprocess", str(PRE_YAML), "--features", str(FEAT_YAML),
+        "--manifest", str(manifest), "--cache-mode", "shared", "--previews", "0",
+        "--paths", str(paths_file),
+    ])
+    assert rc == 0
+    job = _latest_job(workspace)
+    index = pd.read_csv(Path(job["outputs"]["cache_dirs"][0]) / "index.csv")
+    assert sorted(index["sample_id"]) == sorted(wanted)
+    assert job["counts"]["built"] == len(wanted)
+
+
+def test_cli_manifest_filter_rejects_samples_absent_from_the_scan(scan_workspace,
+                                                                  tmp_path, monkeypatch):
+    workspace, paths_file, _ = scan_workspace
+    monkeypatch.chdir(tmp_path)
+    manifest = tmp_path / "manifest.csv"
+    pd.DataFrame({"sample_id": ["nope.wav"]}).to_csv(manifest, index=False)
+    # main() reports the ConfigError and returns 2 instead of silently building.
+    assert main([
+        "extract-features", "--dataset", "uaspeech", "--source", "scan1",
+        "--preprocess", str(PRE_YAML), "--features", str(FEAT_YAML),
+        "--manifest", str(manifest), "--cache-mode", "shared", "--previews", "0",
+        "--paths", str(paths_file),
+    ]) == 2
+
+
 def test_cli_dry_run_with_features_does_not_compute(scan_workspace, tmp_path, monkeypatch):
     workspace, paths_file, _ = scan_workspace
     monkeypatch.chdir(tmp_path)

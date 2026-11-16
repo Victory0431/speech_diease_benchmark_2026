@@ -112,6 +112,10 @@ def collect_statistics(rows: list[dict], stats_config: dict | None = None) -> di
     audio = [r for r in rows if r.get(COL_CATEGORY) == CATEGORY_AUDIO]
     decoded = [r for r in audio if r.get(COL_DECODE_STATUS) == "ok"]
     decode_failed = [r for r in audio if r.get(COL_DECODE_STATUS) == "failed"]
+    decode_not_attempted = [r for r in audio
+                            if r.get(COL_DECODE_STATUS) == "not_attempted"]
+    decode_unclassified = [r for r in audio
+                           if r.get(COL_DECODE_STATUS) not in ("ok", "failed", "not_attempted")]
     probed = [r for r in audio if str(r.get(COL_PROBE_STATUS, "")).startswith("ok")]
     probe_failed = [r for r in audio if r.get(COL_PROBE_STATUS) == "failed"]
 
@@ -122,6 +126,8 @@ def collect_statistics(rows: list[dict], stats_config: dict | None = None) -> di
         "probe_failed": len(probe_failed),
         "decoded_ok": len(decoded),
         "decode_failed": len(decode_failed),
+        "decode_not_attempted": len(decode_not_attempted),
+        "decode_unclassified": len(decode_unclassified),
         "archives": sum(1 for r in rows if r.get(COL_CATEGORY) == CATEGORY_ARCHIVE),
         "sidecar": sum(1 for r in rows if r.get(COL_CATEGORY) == CATEGORY_SIDECAR),
         "unknown": sum(1 for r in rows if r.get(COL_CATEGORY) == CATEGORY_UNKNOWN),
@@ -158,11 +164,13 @@ def collect_statistics(rows: list[dict], stats_config: dict | None = None) -> di
     for group in sorted({r.get(COL_DIRECTORY_GROUP) or "" for r in audio}):
         subset = [r for r in audio if (r.get(COL_DIRECTORY_GROUP) or "") == group]
         dec = [r for r in subset if r.get(COL_DECODE_STATUS) == "ok"]
+        not_tried = [r for r in subset if r.get(COL_DECODE_STATUS) == "not_attempted"]
         durs = [r[COL_DURATION_DECODED_SEC] for r in dec if r.get(COL_DURATION_DECODED_SEC) is not None]
         by_directory[group or "(none)"] = {
             "n_files": len(subset),
             "n_decoded_ok": len(dec),
-            "n_decode_failed": len(subset) - len(dec),
+            "n_decode_not_attempted": len(not_tried),
+            "n_decode_failed": len(subset) - len(dec) - len(not_tried),
             "n_speakers": len({r.get(COL_SPEAKER_TOKEN) for r in subset if r.get(COL_SPEAKER_TOKEN)}),
             "duration_sec": _percentiles(durs),
         }
