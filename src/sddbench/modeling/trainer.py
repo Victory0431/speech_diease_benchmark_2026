@@ -85,12 +85,24 @@ def load_run_data(cfg: dict, workspace: Path, repo_root: Path) -> dict:
     split = pd.read_csv(split_file)
     split_meta = json.loads((split_dir / "split.json").read_text(encoding="utf-8"))
     admission_file = prepared_dir / "admission.json"
+    admitted: dict = {}
     if admission_file.is_file():
         admitted = json.loads(admission_file.read_text(encoding="utf-8"))
         if admitted.get("manifest_fingerprint") and \
                 split_meta.get("manifest_fingerprint") != admitted["manifest_fingerprint"]:
             raise RunError("split was built from a different manifest fingerprint; "
                            "rerun `sddbench split`")
+    if "benchmark_eligible" in admitted:
+        benchmark_eligible = bool(admitted["benchmark_eligible"])
+        scientific_status = dict(admitted.get("scientific_status") or {})
+    else:
+        # Historical prepared jobs predate the eligibility gate. Keep their
+        # numbers reproducible, but never promote them to the formal set.
+        benchmark_eligible = False
+        scientific_status = {
+            "level": "technical_only",
+            "reason": "admission_missing" if not admitted else "legacy_admission_unverified",
+        }
     for column in ("sample_id", "group_id", "label"):
         if column not in manifest.columns:
             raise RunError(f"manifest missing {column}")
@@ -150,6 +162,8 @@ def load_run_data(cfg: dict, workspace: Path, repo_root: Path) -> dict:
         "grouping": grouping,
         "manifest_file": manifest_file, "split_file": split_file,
         "split_dir": split_dir,
+        "benchmark_eligible": benchmark_eligible,
+        "scientific_status": scientific_status,
     }
 
 
@@ -405,6 +419,8 @@ def run_experiment(cfg: dict, workspace: Path, repo_root: Path,
             "feature_cache": data["cache_info"],
         },
         "class_order": class_order, "positive_class": data["positive_class"],
+        "benchmark_eligible": bool(data["benchmark_eligible"]),
+        "scientific_status": data["scientific_status"],
         "features": {
             "feature_type": data["feature_cfg"]["feature_type"],
             "recipe_id": recipe_id(data["feature_cfg"]),

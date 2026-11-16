@@ -12,18 +12,20 @@ import yaml
 from sddbench.cli import main
 
 
-def _wav(path: Path, seconds: float = 1.0, sr: int = 16000) -> None:
+def _wav(path: Path, seconds: float = 1.0, sr: int = 16000, freq: float = 220.0) -> None:
     t = np.arange(int(seconds * sr)) / sr
-    sf.write(str(path), 0.4 * np.sin(2 * np.pi * 220 * t), sr, subtype="PCM_16")
+    sf.write(str(path), 0.4 * np.sin(2 * np.pi * freq * t), sr, subtype="PCM_16")
 
 
 @pytest.fixture
 def folders_dataset(tmp_path):
     root = tmp_path / "demo_dataset"
+    tone = 200.0
     for folder, names in {"Healthy": ["h1", "h2"], "Disorder": ["d1", "d2"]}.items():
         (root / folder).mkdir(parents=True)
         for name in names:
-            _wav(root / folder / f"{name}.wav")
+            tone += 17.0
+            _wav(root / folder / f"{name}.wav", freq=tone)
     workspace = tmp_path / "ws"
     paths = tmp_path / "paths.yaml"
     paths.write_text(yaml.safe_dump({

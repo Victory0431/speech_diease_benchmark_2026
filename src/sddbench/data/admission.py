@@ -49,6 +49,7 @@ STATUS_SUBJECT_CONFLICT = "blocked_subject_label_conflict"
 STATUS_MIC_NOT_SELECTED = "blocked_mic_not_selected"
 STATUS_ORIGIN_DUPLICATE = "blocked_multiple_rows_per_origin"
 STATUS_ORIGIN_CONFLICT = "blocked_origin_conflict"
+STATUS_DUPLICATE_CONTENT = "blocked_duplicate_content"
 STATUS_NO_ROWS = "blocked_no_eligible_rows"
 
 
@@ -416,3 +417,37 @@ def manifest_fingerprint(manifest: list[dict]) -> str:
     for row in sorted(manifest, key=lambda r: r["sample_id"]):
         h.update(f"{row['sample_id']}|{row.get(COL_SHA256)}|{row['label']}\n".encode())
     return h.hexdigest()
+
+
+def duplicate_content_issues(manifest: list[dict]) -> list[dict]:
+    """Exact-content duplicates across groups or labels are leakage.
+
+    Different paths do not prove different recordings: the same bytes may be
+    copied under two folders.  A duplicate *inside* one group is only a
+    warning (redundant rows), because it cannot leak a person across the split.
+    Near-duplicates and re-encoded variants stay the adapters' ``origin_id``
+    job; this check is intentionally exact-hash only.
+    """
+    by_hash: dict[str, list[dict]] = defaultdict(list)
+    for row in manifest:
+        digest = _s(row.get(COL_SHA256))
+        if digest:
+            by_hash[digest].append(row)
+    issues: list[dict] = []
+    for digest, rows in by_hash.items():
+        if len(rows) < 2:
+            continue
+        groups = sorted({_s(r.get("group_id")) for r in rows})
+        labels = sorted({_s(r.get("label")) for r in rows})
+        paths = sorted(_s(r.get("sample_id")) for r in rows)
+        if len(groups) > 1 or len(labels) > 1:
+            issues.append(_issue(
+                "duplicate_content_across_groups", "error", paths[0],
+                f"sha256 {digest[:12]} appears in {len(rows)} files across "
+                f"groups={groups[:5]} labels={labels[:5]}; paths={paths[:5]}"))
+        else:
+            issues.append(_issue(
+                "duplicate_content_within_group", "warning", paths[0],
+                f"sha256 {digest[:12]} appears {len(rows)} times inside group "
+                f"{groups[0]!r}; paths={paths[:5]}"))
+    return issues

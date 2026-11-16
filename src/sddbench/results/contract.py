@@ -94,6 +94,8 @@ def sanitize_run_meta(run: dict) -> dict:
         "split_id": run.get("split_id"),
         "class_order": run.get("class_order"),
         "positive_class": run.get("positive_class"),
+        "benchmark_eligible": bool(run.get("benchmark_eligible")),
+        "scientific_status": run.get("scientific_status"),
         "seed": run.get("seed"),
         "model": run.get("model"),
         "training": _sanitize_training(run.get("training")),

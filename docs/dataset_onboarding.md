@@ -71,6 +71,14 @@ label_map:                # 可省略；省略时文件夹名小写即为标签
   Healthy: healthy
   Control: healthy
   Disorder: disorder
+# 目录名只能提供标签，不能证明“不同文件是不同人”。identity 未声明时，
+# 这个库只能做技术实验，不能进入宣称无人员泄漏的正式主榜。
+scientific_status:
+  level: technical_only      # benchmark_eligible | technical_only | blocked
+  reason: identity_unverified
+identity:
+  evidence: unknown          # subject_ids | one_recording_per_person | unknown
+  reference: ""              # one_recording_per_person 时必须给出处
 ```
 
 字段说明：
@@ -81,6 +89,8 @@ label_map:                # 可省略；省略时文件夹名小写即为标签
 - `label_map`：
   - 省略 → 标签 = 文件夹名小写（`Healthy/` → `healthy`）；
   - 提供但漏了某个实际存在的文件夹 → **准入直接阻塞**，不会瞎猜。
+- `scientific_status` / `identity`：见 3.5 节。`prepare` 的 `status=approved`
+  只表示清单结构可用；是否进入正式基准由 `benchmark_eligible` 单独决定。
 
 ### 3.3 选择预处理与特征配方
 
@@ -114,9 +124,21 @@ sddbench prepare --dataset my_dataset --source <scan_id> \
 
 不需要 `--review`，也不会生成复核 CSV。成功时：
 
-- `status=approved`，退出码 0；
+- `status=approved`，退出码 0；但 `benchmark_eligible` 默认是 **false**；
 - `manifest.csv` 的 `label_source` 为 `directory:Healthy` 这种形式；
 - 目录名不一致（未映射）或音频放在根目录 → 退出码 3，看 `admission.md`。
+
+三种身份证据与可进入的轨道（F02）：
+
+| 身份条件 | 允许的划分 | 能进入哪里 |
+| --- | --- | --- |
+| 人员 ID 可靠（rich 复核表 `confirmed_subject_id`） | `subject` | 正式主基准候选 |
+| 有来源依据证明每人一条原始录音（`identity.evidence: one_recording_per_person` + `reference`） | `file` | 正式候选，需报告依据 |
+| 身份未知/无法排除同人多录音（默认） | `file` | 只做技术实验，不进无泄漏主榜 |
+
+要让 `benchmark_eligible` 变成 true，必须同时满足：`scientific_status.level:
+benchmark_eligible`、身份证据成立、准入无 blocker，且没有跨组/跨类的精确内容重复。
+仅把目录名写进 `label_map` **不会**自动提升证据等级。
 
 记住打印出的 `prepared_id`（目录名，如 `20261115T..._my_dataset_prepare`）。
 

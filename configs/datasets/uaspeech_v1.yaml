@@ -5,6 +5,30 @@ dataset_id: uaspeech
 adapter: uaspeech
 task_version: 1
 admission: pending_review          # 人工完成 label_review 后才能改为 approved（D4）
+
+# 科学准入（F01）：标签证据与人员独立性证据分开声明。
+# level=benchmark_eligible 才允许进入正式主榜；technical_only 只用于技术实验。
+# 已知冲突未解决前保持 technical_only / label_conflict，不能靠“用户确认目录含义”关闭。
+scientific_status:
+  level: technical_only
+  reason: label_conflict
+  detail: >-
+    本地全部 C 前缀说话人位于 Disorder/、全部非 C 前缀位于 Healthy/；而官方
+    UASpeech 说话人表中 F02 属于构音障碍说话人（Spastic），本地却放在 Healthy/。
+    目录组与官方说话人角色疑似倒置，标签方向（sensitivity/specificity 的含义）未经证实。
+  evidence:
+    - "Kim et al., Interspeech 2008 说话人表：F02 为构音障碍说话人（Spastic）"
+    - "本地 docs/datasets/uaspeech.md：C 前缀与非 C 前缀目录完全分离"
+    - "artifacts/label_review/uaspeech_label_review.csv：evidence 仅为用户确认目录含义，不足以回源"
+  missing_evidence:
+    - "官方发行版说话人表/元数据，与本地 speaker_token 一一对应"
+    - "本地下载记录或版本说明，确认目录名是否由本地重新整理"
+    - "若确为倒置，需版本化的新标签映射；不得直接翻转旧结果"
+
+identity:
+  evidence: subject_ids            # speaker_token 可作为人员隔离证据
+  reference: "speaker_token（CF02..CM13、F02..M16）；见 label_review CSV"
+
 grouping: subject                  # subject：按确认后的说话人隔离；file：每条录音自成一组（无说话人元数据时）
 
 naming:
@@ -26,6 +50,8 @@ selection:                         # D4 准入规则（人工决策，不自动�
   elicitation: unknown             # 词项语义未核验前不冒充朗读/访谈
 labels:
   # 2026-11-09 用户确认：本地 Healthy/Disorder 目录即健康/疾病标签。
+  # 注意：这只是目录含义的确认，不是对官方说话人表的回源；已知冲突见
+  # scientific_status，因此该映射当前只用于技术轨道，不进入正式基准。
   mapping: {Healthy: control, Disorder: disorder}
   class_order: [control, disorder]
   positive_class: disorder

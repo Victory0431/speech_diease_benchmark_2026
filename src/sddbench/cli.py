@@ -66,8 +66,10 @@ from .data.admission import (
     STATUS_NO_ROWS,
     STATUS_ORIGIN_CONFLICT,
     STATUS_ORIGIN_DUPLICATE,
+    STATUS_DUPLICATE_CONTENT,
     STATUS_SUBJECT_CONFLICT,
     build_manifest,
+    duplicate_content_issues,
     load_label_review,
     manifest_fingerprint,
     review_from_label_folders,
@@ -78,6 +80,7 @@ from .data.admission import (
     write_review_template,
 )
 from .reporting.admission_report import render_admission
+from .data.scientific_status import assess_scientific_status
 from .features.geometry import frontend_geometry
 from .data.windows import (
     WINDOW_COLUMNS,
@@ -290,20 +293,34 @@ def cmd_prepare(args) -> int:
 
     manifest: list[dict] = []
     manifest_fp = ""
+    duplicate_issues: list[dict] = []
     if status == STATUS_APPROVED:
         manifest, manifest_issues = build_manifest(
             selected, check["confirmed"], args.dataset, review_path, selection,
             grouping=grouping,
             label_source_prefix="directory" if is_folders else None)
         errors = [i for i in manifest_issues if i.get("severity") == "error"]
+        duplicate_issues = duplicate_content_issues(manifest) if not errors else []
+        duplicate_errors = [i for i in duplicate_issues if i.get("severity") == "error"]
         if errors:
             status = STATUS_ORIGIN_CONFLICT
             blockers = errors + blockers
+        elif duplicate_errors:
+            status = STATUS_DUPLICATE_CONTENT
+            blockers = duplicate_issues + blockers
         elif not manifest:
             status = STATUS_NO_ROWS
             manifest = []
         else:
             manifest_fp = manifest_fingerprint(manifest)
+            blockers = duplicate_issues + blockers
+
+    science = assess_scientific_status(
+        task_cfg, grouping=grouping, n_confirmed_groups=len(check["confirmed"]),
+        leakage_issues=duplicate_issues)
+    if status != STATUS_APPROVED:
+        science["benchmark_eligible"] = False
+        science["admission_status"] = status
 
     base_job_id = f"{_stamp()}_{args.dataset}_prepare"
     job_id = base_job_id
@@ -312,7 +329,9 @@ def cmd_prepare(args) -> int:
         suffix += 1
         job_id = f"{base_job_id}_{suffix:02d}"
     out_dir = workspace_dir(paths, "prepared", task_id, job_id)
-    print(f"[prepare] status={status}")
+    print(f"[prepare] status={status} benchmark_eligible={science['benchmark_eligible']} "
+          f"scientific_status={science['level']}"
+          + (f" reason={science['reason']}" if science["reason"] else ""))
     print(f"[prepare] output dir: {out_dir}")
 
     review_rows = review_status_rows(inventory, review)
@@ -334,6 +353,10 @@ def cmd_prepare(args) -> int:
         "scan_dir": str(scan_dir), "out_dir": str(out_dir),
         "status": status, "selection": selection, "grouping": grouping,
         "layout": layout,
+        "scientific_status": science,
+        "benchmark_eligible": bool(science["benchmark_eligible"]),
+        "label_evidence": science["label_evidence"],
+        "identity_evidence": science["identity_evidence"],
         "review_path": str(review_path), "review_exists": review_exists,
         "review": {
             "n_inventory": len(inventory),
@@ -375,6 +398,9 @@ def cmd_prepare(args) -> int:
                           else (file_sha256(review_path) if review_exists else None)),
         "selection": selection, "generated_at": _now_iso(),
         "tool_version": __version__, "status": status,
+        "benchmark_eligible": bool(science["benchmark_eligible"]),
+        "scientific_status": science["level"],
+        "scientific_reason": science["reason"],
     }
     (out_dir / "provenance.json").write_text(
         json.dumps(provenance, ensure_ascii=False, indent=2), encoding="utf-8")

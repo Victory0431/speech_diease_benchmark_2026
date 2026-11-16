@@ -1,7 +1,12 @@
 # UAspeech 数据集档案（本地版本）
 
-状态：**技术接入，标签未核验**（admission: pending_review）。
-本文件记录本机 `fresh_datasets/UAspeech` 的实测结构；不照抄文献数字。
+状态：**技术接入；`technical_only / label_conflict`；`benchmark_eligible=false`。**
+
+- 机器可读状态：`configs/datasets/uaspeech_v1.yaml` 的 `scientific_status`。
+- 历史结果：保留为技术结果，不覆盖、不改写；不得引用为正式疾病识别基准成绩。
+- 准入清单仍可生成（`status=approved` 只表示结构可用），但不会进入正式主榜；
+  `publish` 只给 `benchmark_eligible=true` 的 run 排名。
+- 本文件记录本机 `fresh_datasets/UAspeech` 的实测结构；不照抄文献数字。
 
 ## 来源与许可
 
@@ -38,13 +43,24 @@ UAspeech/
 
 ## 已知疑点（必须在 D4 label_review 中解决）
 
-1. **目录组与 C 前缀完全分离**：本库所有 C 前缀说话人位于 `Disorder/`，
-   所有非 C 前缀位于 `Healthy/`。官方约定 C 前缀 = Control（对照组），
-   若本地整理映射倒置，则目录名不能作为标签。
-2. 同一词项（speaker+block+prompt）最多 7 个 mic 文件：同源录音，
+1. **目录组与官方说话人表冲突**：本库所有 C 前缀说话人位于 `Disorder/`，
+   所有非 C 前缀位于 `Healthy/`。官方约定 C 前缀 = Control（对照组）；
+   更关键的是，原论文说话人表把 **F02 列为构音障碍说话人（Spastic）**，
+   本地却把 `Healthy/F02` 当作对照。目录名与官方角色疑似整体倒置。
+2. `artifacts/label_review/uaspeech_label_review.csv` 的 `confirmed` 证据仅写
+   “用户确认目录即标签”，这**只确认了目录含义，没有回源**，不能关闭第 1 条冲突。
+3. 同一词项（speaker+block+prompt）最多 7 个 mic 文件：同源录音，
    不是独立样本；人员归组以 speaker_token 为准。
-3. 无任何本地元数据/评分文件；标签只能来自 label_review 的实证核对。
-4. 尚未核实每说话人块×词项×mic 的覆盖完整性（D1 stats 报告提供覆盖表）。
+4. 无任何本地元数据/评分文件；标签只能来自 label_review 的实证核对。
+5. 尚未核实每说话人块×词项×mic 的覆盖完整性（D1 stats 报告提供覆盖表）。
+
+### 解除阻断需要什么证据
+
+- 官方发行版的说话人表/元数据，能与本地 `speaker_token` 一一对应；
+- 本地下载记录或版本说明，确认 `Disorder/`、`Healthy/` 是否由本地重新整理；
+- 若确认目录与官方角色倒置，生成**版本化的新标签映射**（新 task/prepared/split
+  版本），不修改原始文件，也不改写旧结果；
+- 人工抽听只能作辅助，不能替代元数据证据，也不能据听感整体翻转标签。
 
 ## 标签核验程序（D4）
 

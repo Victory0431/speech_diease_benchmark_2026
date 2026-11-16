@@ -100,6 +100,9 @@ def build_leaderboard(results_root: str | Path) -> pd.DataFrame:
         row = {
             "dataset": meta.get("dataset"),
             "task_id": meta.get("task_id"),
+            "benchmark_eligible": bool(meta.get("benchmark_eligible")),
+            "scientific_status": (meta.get("scientific_status") or {}).get("level"),
+            "scientific_reason": (meta.get("scientific_status") or {}).get("reason"),
             "experiment_id": meta.get("experiment_id"),
             "run_id": meta.get("run_id"),
             "seed": meta.get("seed"),
@@ -149,8 +152,8 @@ def build_leaderboard(results_root: str | Path) -> pd.DataFrame:
         frame = pd.DataFrame(columns=["dataset", "run_id", "primary_balanced_accuracy"])
     else:
         frame = frame.sort_values(
-            ["primary_balanced_accuracy", "primary_auroc"],
-            ascending=False, na_position="last").reset_index(drop=True)
+            ["benchmark_eligible", "primary_balanced_accuracy", "primary_auroc"],
+            ascending=[False, False, False], na_position="last").reset_index(drop=True)
     frame.to_csv(results_root / "leaderboard.csv", index=False)
     (results_root / "leaderboard.md").write_text(_render(frame), encoding="utf-8")
     return frame
@@ -169,18 +172,26 @@ def _render(frame: pd.DataFrame) -> str:
         "# 跨数据集基准榜（test / 主评价单位）",
         "",
         f"- 结果契约版本：`{CONTRACT_VERSION}`",
-        f"- 运行数：`{len(frame)}`",
+        f"- 运行数：`{len(frame)}`；其中正式基准候选 "
+        f"`{int(frame['benchmark_eligible'].sum()) if 'benchmark_eligible' in frame else 0}` 条。",
+        "- 只有 `benchmark_eligible=true` 的 run 参与名次；技术验证、标签冲突或身份未核验的",
+        "  结果保留在表中但不排名，也不能引用为正式基准成绩。",
         "- 排序：`primary_balanced_accuracy` 降序；同分看 `primary_auroc`。",
         "- `primary_unit` 标出主评价单位：有说话人时为 subject，没有说话人时为 recording；",
         "  不同单位之间不直接比较，只并列展示。",
         "- 这里只含聚合指标与小体积图；权重、逐录音预测、患者级清单不在仓库。",
         "",
-        "| # | dataset | run_id | primary unit | test groups | seed | dropout | bAcc | sens | spec | precision | F1 | AUROC | AP | log loss | Brier | window bAcc |",
-        "| ---: | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| # | dataset | run_id | eligible | primary unit | test groups | seed | dropout | bAcc | sens | spec | precision | F1 | AUROC | AP | log loss | Brier | window bAcc |",
+        "| ---: | --- | --- | :---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
-    for i, row in frame.iterrows():
+    rank = 0
+    for _, row in frame.iterrows():
+        eligible = bool(row.get("benchmark_eligible"))
+        if eligible:
+            rank += 1
         lines.append(
-            f"| {i + 1} | {row['dataset']} | {row['run_id']} | "
+            f"| {rank if eligible else '-'} | {row['dataset']} | {row['run_id']} | "
+            f"{'yes' if eligible else 'no'} | "
             f"{row.get('primary_unit', 'subject')} | "
             f"{_fmt(row['test_subjects'])} | {_fmt(row['seed'])} | "
             f"{_fmt(row['dropout'])} | {_fmt(row['primary_balanced_accuracy'])} | "

@@ -5,6 +5,25 @@ dataset_id: parkinson_kcl
 adapter: parkinson_kcl
 task_version: 1
 admission: pending_review          # label_review 确认后才能改为 approved
+
+# 科学准入（F01/F02）：标签证据与人员独立性证据分开声明。
+# hc/pd 目前只是文件名候选，未回源核对；确认前保持 technical_only。
+scientific_status:
+  level: technical_only
+  reason: label_unverified
+  detail: >-
+    hc/pd 是文件名 token，尚未对照官方说明核实；ID22 等缺失分隔符、_1 重复 take
+    的含义也未确认，因此标签与录音版本都还不能作为正式基准证据。
+  evidence:
+    - "本地文件名模式 ID<nn>[_](hc|pd)_<session tokens>[_<take>].wav"
+  missing_evidence:
+    - "KCL 2017 官方说明/元数据，确认 HC/PD 与 ID<nn> 的含义"
+    - "ID22 与 73 条 fresh 录音的实际筛选依据"
+
+identity:
+  evidence: subject_ids            # ID<nn> 可作为人员隔离证据
+  reference: "speaker_token=ID00..ID36；见 label_review CSV"
+
 grouping: subject                  # subject：按确认后的说话人隔离；file：每条录音自成一组（无说话人元数据时）
 
 naming:
