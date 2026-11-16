@@ -197,7 +197,7 @@ def test_extract_features_end_to_end_keeps_originals(tmp_path, synth_root, monke
         [r for r in pd.read_csv(workspace / "inventory" / "uaspeech" / "scan1" / "files.csv")
          .to_dict("records") if r["relative_path"] == windows.iloc[0]["sample_id"]],
         normalize_preprocess(yaml.safe_load(preprocess.read_text(encoding="utf-8"))),
-        source_scan_id="scan1", verify_source_hash=True)
+        dataset_id="uaspeech", source_scan_id="scan1", verify_source_hash=True)
     assert again.rows[0]["view_hash"] == windows.iloc[0]["view_hash"]
     # originals untouched
     for p, digest in originals.items():
@@ -245,9 +245,11 @@ def test_build_view_index_parallel_matches_serial(synth_root):
         "uaspeech_native_smoke.yaml"
     cfg = normalize_preprocess(yaml.safe_load(preprocess.read_text(encoding="utf-8")))
 
-    serial = build_view_index(synth_root, rows, cfg, source_scan_id="scan1",
+    serial = build_view_index(synth_root, rows, cfg, dataset_id="uaspeech",
+                              source_scan_id="scan1",
                               verify_source_hash=False, workers=1)
-    parallel = build_view_index(synth_root, rows, cfg, source_scan_id="scan1",
+    parallel = build_view_index(synth_root, rows, cfg, dataset_id="uaspeech",
+                                source_scan_id="scan1",
                                 verify_source_hash=False, workers=8)
 
     assert [r["window_id"] for r in parallel.rows] == [r["window_id"] for r in serial.rows]

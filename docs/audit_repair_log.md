@@ -13,10 +13,10 @@
 | F01 | P0 | UAspeech 标签冲突被“目录确认”替代回源 | fixed | A | 数据集配置/数据卡/准入/榜单统一 `technical_only/label_conflict` |
 | F02 | P0 | 无人员信息默认按文件分组并自动 approved | fixed | A | `identity` 与 `label` 证据分离；`benchmark_eligible` 默认 false |
 | F03 | P0 | AP/ROC 对并列分数处理错误 | fixed | B | 按唯一阈值分组；AP/ROC 与图同源；行序不变 |
-| F04 | P0 | task/manifest/原件/缓存身份未闭环 | in_progress | C | 待补 |
+| F04 | P0 | task/manifest/原件/缓存身份未闭环 | fixed | C | task 快照+内容指纹；manifest/split 重算校验；缓存绑定 dataset/source |
 | F05 | P0 | aggregate 签名遗漏前端/准备版本/类别 | in_progress | D | 待补 |
 | F06 | P1 | 阈值不生效；配置校验不统一 | fixed | B | `binary_threshold` 全链路生效；严格校验 |
-| F07 | P1 | 训练用源 Hz 找缓存，重采样接不通 | in_progress | C | 待补 |
+| F07 | P1 | 训练用源 Hz 找缓存，重采样接不通 | fixed | C | 缓存/加载/训练统一用 processed Hz，覆盖 16k→8k、44.1k→16k |
 | F08 | P1 | 网页改特征只写 YAML，C0 开关不可用 | in_progress | E | 待补 |
 | F09 | P0 | run 太晚建立、缺快照、`last.pt` 语义不真 | in_progress | D | 待补 |
 | F10 | P1 | `ratio_longer_than_L` 漏除样本数 | fixed | B | 比例已除以 n，并限制在 [0,1] |
@@ -125,7 +125,85 @@
 
 ## 批次 C（F04、F07）
 
-待补。
+### F04 task / manifest / split / 缓存身份闭环
+
+- **复现**（审计探针，修复前均成立）：
+  - 修改 `manifest.csv` 中某样本的 `sha256`（同 `sample_id`），旧代码只比较
+    admission 里保存的两个字符串，训练照常加载旧特征；
+  - 修改仓库 `configs/datasets/*.yaml` 的 `grouping` 或标签映射，已 prepare 的
+    旧目录仍被接受（训练时现读仓库配置）；
+  - 修改 `split.csv` 的某行 `split`，训练照常使用；
+  - 两个数据集存在相同 `relative_path` 时，特征加载仅按 `sample_id` 匹配。
+- **修复**：
+  - 新增 `src/sddbench/data/identity.py`：
+    - `task_fingerprint(task_cfg)`：对解析后的 task YAML 全文（标签、类别顺序、
+      正类、grouping、layout、筛选、准入规则）做内容哈希；
+    - `manifest_fingerprint(manifest, task_hash)`：覆盖
+      sample/relative_path/subject/group/origin/label_raw/label/variant/elicitation/
+      sample_rate/duration/channels/sha256/official_split/label_source + task_hash，
+      按 `sample_id` 排序；
+    - `split_fingerprint(rows)`：覆盖 sample→(group,label,split) 全表。
+  - `prepare` 同时写入 `task.yaml`、`task_hash`；`admission.json` 记录
+    `manifest_fingerprint`（含 task_hash）；
+  - `split` 从当前 `manifest.csv` **重新计算**指纹并与 admission 比对，写入
+    `manifest_fingerprint/task_hash/split_fingerprint`；
+  - `trainer.load_run_data` 只读 prepared 内的 `task.yaml`（不再读可变仓库配置），
+    重算并核对 task/manifest/split 三个指纹；缺失快照或指纹的旧 prepared
+    明确拒绝并提示重新 prepare；
+  - 特征缓存 schema 升到 2.0：每行绑定 `dataset_id/source_sha256/
+    processed_sample_rate`；`window_id` 改为 `dataset|sample|w0|view_hash`，
+    不再包含 scan_id（同内容重扫复用同一行，不产生假多窗），`view_hash` 纳入
+    `dataset_id`；
+  - `load_features` 先按 dataset 作用域过滤，再检查 sample 唯一性、source hash、
+    processed Hz、feature/view hash；库间同名相对路径不会串库；
+  - 旧 schema 1.0 缓存（含 index.csv 无身份列）明确报错并给出重建命令，
+    **不删除**、不静默沿用。
+- **测试**：`tests/test_identity_chain.py` 覆盖：
+  - 同 `sample_id` 改 `sha256` → 训练拒绝；
+  - 改 `task.yaml` 的 `grouping` → 拒绝；删除快照 → 拒绝；
+  - 改 `split.csv` 分配 → 拒绝；
+  - manifest 指纹随 group/label/origin/sha/variant/subject 变化，split 指纹随分配变化；
+  - 同名相对路径跨库不串、各自取自己的向量；
+  - 缓存 source hash 与 manifest 不一致 → 拒绝；
+  - 16k→8k、44.1k→16k：窗口 `original_sample_rate` 与
+    `processed_sample_rate` 同时正确，缓存按处理后 Hz 存储并可加载；
+  - 同内容不同 scan_id → 同一 `window_id`/`view_hash`；
+  - schema 1.0 缓存被拒绝且文件仍在。
+- **历史结果影响**：
+  - 旧 prepared 目录（无 task_hash/task.yaml 或无 split_fingerprint）不能再用于
+    新训练，需重新 `prepare`/`split`；旧 run 结果与预测保留不变。
+  - 旧特征缓存（schema 1.0）不可复用，需按下方命令重建；不自动删除。
+
+### F07 原始 Hz / 处理 Hz 分离
+
+- **复现**：`load_run_data` 用 `manifest.sample_rate`（源 Hz，如 16k）去找缓存，
+  而 `extract-features` 按前端处理后 Hz（如 8k）落盘；`sample_rate_policy:
+  resample` 在训练端永远找不到缓存。
+- **修复**：
+  - 由 `preprocess.sample_rate_policy` 解析实际处理 Hz：`resample` →
+    `target_sample_rate`；`native` → 要求 manifest 源 Hz 唯一；
+  - `native` 且源 Hz 混合时在训练前明确拒绝（MLP 基线只支持单一处理 Hz）；
+  - 缓存目录、`meta.json`、`index.csv`、`load_features` 与 `run.json`
+    统一使用 processed Hz；
+  - `run.json` 同时记录 `sample_rate`（处理后）与 `original_sample_rates`（源），
+    不再用源 Hz 冒充。
+- **测试**：`tests/test_identity_chain.py`
+  `test_resampled_features_are_stored_and_loaded_at_processed_hz`（16k→8k、
+  44.1k→16k）、`test_native_mixed_rates_are_rejected_before_training`。
+- **历史结果影响**：旧缓存按源 Hz 建目录，属于不同协议，保留为 legacy；
+  旧 run 的 `sample_rate` 字段语义为源 Hz，解读时以 run 包中的
+  `feature_cache`/`original_sample_rates` 为准。
+
+### 旧缓存重建命令（不删除旧目录）
+
+```bash
+sddbench extract-features \
+  --source <scan_id> --dataset <dataset_id> \
+  --preprocess configs/preprocessing/<frontend>.yaml \
+  --features configs/features/<recipe>.yaml
+```
+
+新缓存目录名包含处理后 Hz 与 view 指纹；旧目录可原样保留作审计对照。
 
 ## 批次 D（F05、F09）
 
@@ -141,4 +219,6 @@
 | --- | --- | --- |
 | UAspeech D6/D9 指标、图、run 包 | 保留，标 `technical_only` | 标签冲突未解决，不进入正式名次 |
 | KCL 技术接入 | 保留 | 标签未复核，真实运行继续阻断 |
-| 旧 `artifacts/cache/features/mfcc_stats/` | 保留，legacy | 新代码不读；重建命令见批次 C |
+| 旧 `artifacts/cache/features/mfcc_stats/` | 保留，legacy | schema 1.0，无 dataset/source/processed-Hz 身份；新代码拒绝读取，重建命令见批次 C |
+| 旧 prepared/split（无 task_hash/split_fingerprint） | 保留，不可用于新训练 | 需重新 `prepare`/`split`；旧 run 包不变 |
+| 旧 run（源 Hz 语义） | 保留 | `sample_rate` 为源 Hz；新代码用 `original_sample_rates` 与 processed Hz 区分 |

@@ -1,6 +1,7 @@
 """D6: metrics, MLP, feature loading, config overrides and an end-to-end run."""
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -10,6 +11,11 @@ import pytest
 import torch
 import yaml
 
+from sddbench.data.identity import (
+    manifest_fingerprint,
+    split_fingerprint,
+    task_fingerprint,
+)
 from sddbench.data.windows import normalize_preprocess, preprocess_fingerprint
 from sddbench.features.cache import FeatureCache
 from sddbench.features.mfcc import normalize_feature_config
@@ -126,16 +132,25 @@ def _build_workspace(tmp_path: Path, *, leak: bool = False) -> tuple[Path, Path,
                 "sample_id": sample_id, "relative_path": sample_id,
                 "subject_id": subject, "group_id": f"demo:{subject}", "label": label,
                 "sample_rate": 16000, "duration_decoded_sec": 4.0,
+                "sha256": hashlib.sha256(sample_id.encode()).hexdigest(),
             })
             split = "test" if (leak and subject == "C1" and i >= 2) else split_of[subject]
             split_rows.append({"sample_id": sample_id, "group_id": f"demo:{subject}",
                                "label": label, "split": split})
     pd.DataFrame(rows).to_csv(prepared / "manifest.csv", index=False)
+    task_cfg = {
+        "task_id": "demo_v1", "grouping": "subject",
+        "labels": {"class_order": ["control", "disorder"], "positive_class": "disorder"},
+    }
+    (prepared / "task.yaml").write_text(yaml.safe_dump(task_cfg), encoding="utf-8")
+    task_hash = task_fingerprint(task_cfg)
+    manifest_fp = manifest_fingerprint(rows, task_hash=task_hash)
     (prepared / "admission.json").write_text(json.dumps(
-        {"manifest_fingerprint": "fp1"}), encoding="utf-8")
+        {"manifest_fingerprint": manifest_fp, "task_hash": task_hash}), encoding="utf-8")
     pd.DataFrame(split_rows).to_csv(split_dir / "split.csv", index=False)
     (split_dir / "split.json").write_text(json.dumps(
-        {"summary": {"n_samples": len(rows)}, "manifest_fingerprint": "fp1"}),
+        {"summary": {"n_samples": len(rows)}, "manifest_fingerprint": manifest_fp,
+         "task_hash": task_hash, "split_fingerprint": split_fingerprint(split_rows)}),
         encoding="utf-8")
 
     feature_cfg = normalize_feature_config(feature_raw)
@@ -146,8 +161,9 @@ def _build_workspace(tmp_path: Path, *, leak: bool = False) -> tuple[Path, Path,
     for row in rows:
         label_shift = 3.0 if row["label"] == "disorder" else 0.0
         vec = rng.normal(label_shift, 0.5, size=40).astype(np.float32)
-        cache.add(f"job|{row['sample_id']}|w0|abcd", row["sample_id"], vec, 100,
-                  "viewhash")
+        cache.add(f"demo|{row['sample_id']}|w0|abcd", row["sample_id"], vec, 100,
+                  "viewhash", dataset_id="demo", source_sha256=row["sha256"],
+                  processed_sample_rate=16000)
     cache.finalize()
     return repo, workspace, tmp_path / "runs"
 
@@ -179,6 +195,7 @@ def test_feature_loader_rejects_missing_sample(tmp_path):
         (repo / "configs/preprocessing/demo.yaml").read_text(encoding="utf-8")))
     with pytest.raises(FeatureLoadError):
         load_features(workspace, feature_cfg, ["nope.wav"], 16000,
+                      dataset_id="demo",
                       view_fingerprint=preprocess_fingerprint(preprocess))
 
 

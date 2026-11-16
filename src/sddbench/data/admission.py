@@ -411,12 +411,12 @@ def build_manifest(rows: list[dict], review: dict, dataset_id: str,
     return manifest, issues
 
 
-def manifest_fingerprint(manifest: list[dict]) -> str:
-    import hashlib
-    h = hashlib.sha256()
-    for row in sorted(manifest, key=lambda r: r["sample_id"]):
-        h.update(f"{row['sample_id']}|{row.get(COL_SHA256)}|{row['label']}\n".encode())
-    return h.hexdigest()
+def manifest_fingerprint(manifest: list[dict], task_hash: str = "") -> str:
+    # Schema 2: covers sample/source/people/group/origin/label/variant/split and
+    # the frozen task identity, so a changed grouping or filter no longer keeps
+    # an old prepared job looking valid.
+    from .identity import manifest_fingerprint as _fingerprint
+    return _fingerprint(manifest, task_hash=task_hash)
 
 
 def duplicate_content_issues(manifest: list[dict]) -> list[dict]:

@@ -61,7 +61,7 @@ CROP_ALGORITHM_VERSION = "1.0"
 POSITIONS = ("head", "center", "tail", "fixed_random")
 
 WINDOW_COLUMNS = [
-    "sample_id", "window_id", "relative_path", "source_scan_id",
+    "dataset_id", "sample_id", "window_id", "relative_path", "source_scan_id",
     "directory_group", "speaker_token", "prompt_token", "mic_token",
     "review_status", "parse_status",
     "source_sha256", "decoder_backend",
@@ -220,10 +220,12 @@ def window_geometry(n_samples: int, original_sr: int, cfg: dict,
     }
 
 
-def compute_view_hash(cfg: dict, sample_id: str, source_sha256: str | None,
+def compute_view_hash(cfg: dict, dataset_id: str, sample_id: str,
+                      source_sha256: str | None,
                       resolved: dict) -> str:
     payload = {
         "preprocess": {k: v for k, v in cfg.items() if k not in ("name", "description")},
+        "dataset_id": dataset_id,
         "sample_id": sample_id,
         "source_sha256": source_sha256,
         "resolved": resolved,
@@ -267,6 +269,7 @@ def _preview_name(index: int, rel: str) -> str:
 
 
 def build_view_index(root: Path, records: list[dict], cfg: dict, *,
+                     dataset_id: str,
                      source_scan_id: str,
                      preview_dir: Path | None = None,
                      preview_limit: int = 0,
@@ -295,6 +298,11 @@ def build_view_index(root: Path, records: list[dict], cfg: dict, *,
     Requesting previews forces the serial path because preview names are numbered.
     """
     table = ViewTable()
+    dataset_id = str(dataset_id or "").strip()
+    if not dataset_id:
+        raise ValueError(
+            "build_view_index needs a dataset_id; a relative path alone cannot "
+            "identify a recording across datasets")
     counts = Counter({
         "requested": len(records),
         "built": 0,
@@ -427,7 +435,7 @@ def build_view_index(root: Path, records: list[dict], cfg: dict, *,
             "channel": ch_info,
             "resample": resample_info,
         }
-        view_hash = compute_view_hash(cfg, sample_id, digest, resolved)
+        view_hash = compute_view_hash(cfg, dataset_id, sample_id, digest, resolved)
 
         preview_rel = None
         if preview_dir is not None and preview_state[0] < preview_limit:
@@ -439,9 +447,12 @@ def build_view_index(root: Path, records: list[dict], cfg: dict, *,
             delta["previews_written"] += 1
 
         row = {
+            "dataset_id": dataset_id,
             "sample_id": sample_id,
-            # include scan + view so a different crop can never hit a stale cache row
-            "window_id": f"{source_scan_id}|{sample_id}|w0|{view_hash[:12]}",
+            # Dataset namespace + content-derived view hash. scan_id is kept as
+            # provenance only: re-scanning unchanged bytes must reuse the same
+            # cache row instead of appending a duplicate window of the same view.
+            "window_id": f"{dataset_id}|{sample_id}|w0|{view_hash[:12]}",
             "relative_path": rel,
             "source_scan_id": source_scan_id,
             "directory_group": _s(rec.get(COL_DIRECTORY_GROUP)),

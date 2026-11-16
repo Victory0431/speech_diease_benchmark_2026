@@ -54,6 +54,7 @@ from .data.schema import (
 from .data.stats import collect_statistics
 from .data.prepare import eligible_rows, stratified_sample
 from .data.split import SplitError, assign_splits
+from .data.identity import split_fingerprint, task_fingerprint
 from .reporting.split_report import render_split
 from .data.admission import (
     AdmissionError,
@@ -294,6 +295,7 @@ def cmd_prepare(args) -> int:
 
     manifest: list[dict] = []
     manifest_fp = ""
+    task_hash = task_fingerprint(task_cfg)
     duplicate_issues: list[dict] = []
     if status == STATUS_APPROVED:
         manifest, manifest_issues = build_manifest(
@@ -313,7 +315,7 @@ def cmd_prepare(args) -> int:
             status = STATUS_NO_ROWS
             manifest = []
         else:
-            manifest_fp = manifest_fingerprint(manifest)
+            manifest_fp = manifest_fingerprint(manifest, task_hash=task_hash)
             blockers = duplicate_issues + blockers
 
     science = assess_scientific_status(
@@ -373,6 +375,7 @@ def cmd_prepare(args) -> int:
         "counts": counts,
         "label_counts": dict(sorted(label_counts.items())),
         "manifest_fingerprint": manifest_fp,
+        "task_hash": task_hash,
         "started_at": _now_iso(), "finished_at": _now_iso(),
         "elapsed_sec": round(time.time() - t0, 3),
     }
@@ -399,6 +402,8 @@ def cmd_prepare(args) -> int:
                           else (file_sha256(review_path) if review_exists else None)),
         "selection": selection, "generated_at": _now_iso(),
         "tool_version": __version__, "status": status,
+        "task_hash": task_hash,
+        "manifest_fingerprint": manifest_fp,
         "benchmark_eligible": bool(science["benchmark_eligible"]),
         "scientific_status": science["level"],
         "scientific_reason": science["reason"],
@@ -439,18 +444,30 @@ def cmd_split(args) -> int:
         raise ConfigError(str(e)) from e
 
     admission_file = prepared_dir / "admission.json"
-    manifest_fp = ""
+    admitted: dict = {}
+    task_hash = ""
     if admission_file.is_file():
-        manifest_fp = json.loads(admission_file.read_text(encoding="utf-8")).get(
-            "manifest_fingerprint", "")
-    identity = json.dumps({"manifest": manifest_fp, "seed": args.seed,
-                           "fractions": fractions}, sort_keys=True)
+        admitted = json.loads(admission_file.read_text(encoding="utf-8"))
+        task_hash = str(admitted.get("task_hash") or "")
+    # Recompute from the current CSV content: a saved string alone cannot prove
+    # the manifest was not edited after admission.
+    manifest_fp = manifest_fingerprint(manifest, task_hash=task_hash)
+    recorded_fp = str(admitted.get("manifest_fingerprint") or "")
+    if recorded_fp and recorded_fp != manifest_fp:
+        raise ConfigError(
+            "manifest.csv content no longer matches admission.json "
+            f"(recorded {recorded_fp[:12]}, computed {manifest_fp[:12]}); "
+            "re-run `sddbench prepare` instead of splitting a modified manifest")
+    identity = json.dumps({"manifest": manifest_fp, "task_hash": task_hash,
+                           "seed": args.seed, "fractions": fractions}, sort_keys=True)
     split_id = f"{_stamp()}_seed{args.seed}_{hashlib.sha256(identity.encode()).hexdigest()[:8]}"
     out_dir = workspace_dir(paths, "splits", task_id, split_id)
     job = {
         "split_id": split_id, "task_id": task_id, "dataset_id": args.dataset,
         "prepared_id": args.prepared, "manifest": str(manifest_file),
-        "manifest_fingerprint": manifest_fp, "seed": args.seed,
+        "manifest_fingerprint": manifest_fp, "task_hash": task_hash,
+        "split_fingerprint": split_fingerprint(rows),
+        "seed": args.seed,
         "fractions": fractions, "summary": summary, "out_dir": str(out_dir),
         "created_at": _now_iso(), "code_version": __version__,
     }
@@ -986,9 +1003,13 @@ def cmd_extract_features(args) -> int:
     def _on_view(row, valid, processed_sr):
         # Cache lookups/writes are serialised; MFCC runs outside the lock so the
         # pool actually parallelises the expensive part.
-        with cache_lock:
-            cache = manager.cache_for(processed_sr)
-            existing = cache.existing(row["window_id"])
+        try:
+            with cache_lock:
+                cache = manager.cache_for(processed_sr)
+                existing = cache.existing(row["window_id"])
+        except FeatureConfigError as e:
+            _fail(row, "feature_cache_incompatible", str(e)[:500])
+            return
         if existing is not None:
             if existing.get("view_hash") != row["view_hash"]:
                 _fail(row, "feature_cache_collision",
@@ -1005,7 +1026,10 @@ def cmd_extract_features(args) -> int:
         try:
             with cache_lock:
                 cache.add(row["window_id"], row["sample_id"], result.vector,
-                          result.n_frames, row["view_hash"])
+                          result.n_frames, row["view_hash"],
+                          dataset_id=row["dataset_id"],
+                          source_sha256=row.get("source_sha256"),
+                          processed_sample_rate=processed_sr)
                 feature_counts["n_new"] += 1
         except (FeatureError, FeatureConfigError) as e:
             _fail(row, "feature_failed", str(e)[:500])
@@ -1026,6 +1050,7 @@ def cmd_extract_features(args) -> int:
     else:
         table = build_view_index(
             root, chosen, cfg,
+            dataset_id=args.dataset,
             source_scan_id=args.source,
             preview_dir=preview_dir,
             preview_limit=preview_limit,

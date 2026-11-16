@@ -20,6 +20,7 @@ import yaml
 from torch import nn
 
 from .. import __version__
+from ..data.identity import manifest_fingerprint, split_fingerprint, task_fingerprint
 from ..data.windows import normalize_preprocess, preprocess_fingerprint
 from ..features.registry import normalize_feature_config, recipe_id
 from ..results.contract import CONTRACT_VERSION, validate_metrics
@@ -60,16 +61,6 @@ def _git_commit(repo_root: Path) -> dict:
         return {"commit": None, "dirty": None}
 
 
-def _load_task_config(repo_root: Path, dataset: str, task_id: str) -> dict:
-    path = repo_root / "configs" / "datasets" / f"{task_id}.yaml"
-    if not path.is_file():
-        path = repo_root / "configs" / "datasets" / f"{dataset}_v1.yaml"
-    if not path.is_file():
-        return {}
-    with path.open("r", encoding="utf-8") as f:
-        return yaml.safe_load(f) or {}
-
-
 def load_run_data(cfg: dict, workspace: Path, repo_root: Path) -> dict:
     validate_experiment(cfg)
     task_id = cfg.get("task_id") or f"{cfg['dataset']}_v1"
@@ -86,13 +77,56 @@ def load_run_data(cfg: dict, workspace: Path, repo_root: Path) -> dict:
     split = pd.read_csv(split_file)
     split_meta = json.loads((split_dir / "split.json").read_text(encoding="utf-8"))
     admission_file = prepared_dir / "admission.json"
-    admitted: dict = {}
-    if admission_file.is_file():
-        admitted = json.loads(admission_file.read_text(encoding="utf-8"))
-        if admitted.get("manifest_fingerprint") and \
-                split_meta.get("manifest_fingerprint") != admitted["manifest_fingerprint"]:
-            raise RunError("split was built from a different manifest fingerprint; "
-                           "rerun `sddbench split`")
+    if not admission_file.is_file():
+        raise RunError(f"admission.json not found: {admission_file}; re-run `sddbench prepare`")
+    admitted = json.loads(admission_file.read_text(encoding="utf-8"))
+
+    # ---- frozen task snapshot (F04): never read the mutable repo task YAML ----
+    task_snapshot_file = prepared_dir / "task.yaml"
+    if not task_snapshot_file.is_file():
+        raise RunError(
+            f"prepared job {prepared_dir} has no task.yaml snapshot; its task definition "
+            "was never frozen, so a changed grouping/filter/label map could silently pass. "
+            "Re-run `sddbench prepare` to create a verifiable job")
+    task_cfg = yaml.safe_load(task_snapshot_file.read_text(encoding="utf-8")) or {}
+    task_hash = task_fingerprint(task_cfg)
+    recorded_task_hash = str(admitted.get("task_hash") or "")
+    if not recorded_task_hash:
+        raise RunError(
+            "admission.json is legacy (no task_hash); it cannot prove which task "
+            "definition produced the manifest. Re-run `sddbench prepare`")
+    if recorded_task_hash != task_hash:
+        raise RunError(
+            "task.yaml snapshot content no longer matches admission.json "
+            f"(recorded {recorded_task_hash[:12]}, computed {task_hash[:12]}); "
+            "re-run `sddbench prepare` instead of editing a frozen task snapshot")
+
+    # ---- manifest content fingerprint, recomputed from the current CSV ----
+    recorded_manifest_fp = str(admitted.get("manifest_fingerprint") or "")
+    if not recorded_manifest_fp:
+        raise RunError(
+            "admission.json has no manifest fingerprint; re-run `sddbench prepare`")
+    manifest_fp = manifest_fingerprint(manifest.to_dict("records"), task_hash=task_hash)
+    if manifest_fp != recorded_manifest_fp:
+        raise RunError(
+            "manifest.csv content changed after admission "
+            f"(recorded {recorded_manifest_fp[:12]}, computed {manifest_fp[:12]}); "
+            "refusing to train on a modified manifest")
+    if split_meta.get("manifest_fingerprint") != recorded_manifest_fp:
+        raise RunError("split was built from a different manifest fingerprint; "
+                       "rerun `sddbench split`")
+    recorded_split_fp = str(split_meta.get("split_fingerprint") or "")
+    if not recorded_split_fp:
+        raise RunError(
+            f"split {split_dir} is legacy (no split_fingerprint); re-run `sddbench split`")
+    split_fp = split_fingerprint(split.to_dict("records"))
+    if split_fp != recorded_split_fp:
+        raise RunError(
+            "split.csv content changed after it was created "
+            f"(recorded {recorded_split_fp[:12]}, computed {split_fp[:12]})")
+    if str(split_meta.get("task_hash") or "") != task_hash:
+        raise RunError("split task_hash disagrees with the prepared task snapshot")
+
     if "benchmark_eligible" in admitted:
         benchmark_eligible = bool(admitted["benchmark_eligible"])
         scientific_status = dict(admitted.get("scientific_status") or {})
@@ -109,6 +143,9 @@ def load_run_data(cfg: dict, workspace: Path, repo_root: Path) -> dict:
             raise RunError(f"manifest missing {column}")
         if column not in split.columns:
             raise RunError(f"split missing {column}")
+    for column in ("sha256", "sample_rate"):
+        if column not in manifest.columns:
+            raise RunError(f"manifest missing {column}")
     merged = manifest.merge(split[["sample_id", "group_id", "label", "split"]],
                             on="sample_id", suffixes=("", "_split"),
                             validate="one_to_one")
@@ -119,12 +156,10 @@ def load_run_data(cfg: dict, workspace: Path, repo_root: Path) -> dict:
     if (merged["label"] != merged["label_split"]).any():
         raise RunError("split label disagrees with manifest")
 
-    rates = merged["sample_rate"].dropna().astype(int).unique().tolist()
-    if len(rates) != 1:
-        raise RunError(f"MLP baseline needs one actual sample rate, found {rates}")
-    sample_rate = int(rates[0])
+    # Original Hz is a property of the source; the cache is keyed by the rate the
+    # frontend actually produced (F07). Resolve that rate before loading vectors.
+    original_rates = merged["sample_rate"].dropna().astype(int).unique().tolist()
 
-    task_cfg = _load_task_config(repo_root, cfg["dataset"], task_id)
     labels_cfg = task_cfg.get("labels") or {}
     grouping = str(task_cfg.get("grouping") or "subject")
     if grouping not in ("subject", "file"):
@@ -153,8 +188,21 @@ def load_run_data(cfg: dict, workspace: Path, repo_root: Path) -> dict:
     with (repo_root / preprocess_rel).open("r", encoding="utf-8") as f:
         preprocess_cfg = normalize_preprocess(yaml.safe_load(f) or {})
     view_fingerprint = preprocess_fingerprint(preprocess_cfg)
+    if preprocess_cfg["sample_rate_policy"] == "resample":
+        processed_rate = int(preprocess_cfg["target_sample_rate"])
+    elif len(original_rates) == 1:
+        processed_rate = int(original_rates[0])
+    else:
+        raise RunError(
+            f"sample_rate_policy=native with mixed original rates {original_rates}; "
+            "the MLP baseline needs one processed rate (use resample(target_sample_rate=...) "
+            "or a single-rate dataset)")
     sample_ids = merged["sample_id"].astype(str).tolist()
-    X, cache_info = load_features(workspace, feature_cfg, sample_ids, sample_rate,
+    source_hashes = {str(s): str(h) for s, h in
+                     zip(merged["sample_id"], merged["sha256"])}
+    X, cache_info = load_features(workspace, feature_cfg, sample_ids, processed_rate,
+                                  dataset_id=str(cfg["dataset"]),
+                                  source_hashes=source_hashes,
                                   view_fingerprint=view_fingerprint)
 
     return {
@@ -162,11 +210,17 @@ def load_run_data(cfg: dict, workspace: Path, repo_root: Path) -> dict:
         "merged": merged, "X": X, "cache_info": cache_info,
         "class_order": class_order, "positive_class": positive,
         "positive_index": class_order.index(positive),
-        "sample_rate": sample_rate, "feature_cfg": feature_cfg,
+        "sample_rate": processed_rate,
+        "original_sample_rates": original_rates,
+        "feature_cfg": feature_cfg,
         "preprocess_rel": preprocess_rel, "view_fingerprint": view_fingerprint,
         "grouping": grouping,
         "manifest_file": manifest_file, "split_file": split_file,
         "split_dir": split_dir,
+        "task_snapshot_file": task_snapshot_file,
+        "task_hash": task_hash,
+        "manifest_fingerprint": manifest_fp,
+        "split_fingerprint": split_fp,
         "benchmark_eligible": benchmark_eligible,
         "scientific_status": scientific_status,
     }
@@ -441,8 +495,16 @@ def run_experiment(cfg: dict, workspace: Path, repo_root: Path,
                 encoding="utf-8"))["summary"],
             "n_samples": len(merged), "n_subjects": len(set(groups)),
             "label_counts": label_counts, "subject_counts": subject_counts,
-            "sample_rate": data["sample_rate"], "feature_dim": int(X.shape[1]),
+            "sample_rate": data["sample_rate"],
+            "original_sample_rates": data["original_sample_rates"],
+            "feature_dim": int(X.shape[1]),
             "feature_cache": data["cache_info"],
+            "identity": {
+                "task_snapshot": str(data["task_snapshot_file"]),
+                "task_hash": data["task_hash"],
+                "manifest_fingerprint": data["manifest_fingerprint"],
+                "split_fingerprint": data["split_fingerprint"],
+            },
         },
         "class_order": class_order, "positive_class": data["positive_class"],
         "benchmark_eligible": bool(data["benchmark_eligible"]),

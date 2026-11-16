@@ -88,7 +88,8 @@ def test_padding_never_changes_mfcc_stats(tmp_path):
         def cb(row, valid, sr):
             vectors.append(extract_mfcc(valid, sr, feat).vector)
 
-        table = build_view_index(root, [rec], cfg, source_scan_id="scan1", on_view=cb)
+        table = build_view_index(root, [rec], cfg, dataset_id="uaspeech",
+                                 source_scan_id="scan1", on_view=cb)
         assert len(table.rows) == 1
         captured[tag] = (table.rows[0], vectors[0])
         return captured[tag]
@@ -108,7 +109,9 @@ def test_cache_roundtrip_reuse_and_delete(tmp_path):
     cache = FeatureCache(base, cfg, 16000, cache_mode="run")
     vec = np.arange(40, dtype=np.float32)
     for i in range(5):
-        assert cache.add(f"w{i}", f"s{i}", vec + i, 100 + i, f"vh{i}") is True
+        assert cache.add(f"w{i}", f"s{i}", vec + i, 100 + i, f"vh{i}",
+                         dataset_id="uaspeech",
+                         source_sha256=f"sha{i}", processed_sample_rate=16000) is True
     summary = cache.finalize()
     assert summary["n_items"] == 5 and summary["dim"] == 40
     assert (cache.path / "shard_000.npz").is_file()
@@ -123,7 +126,8 @@ def test_cache_roundtrip_reuse_and_delete(tmp_path):
     reopened = FeatureCache(base, cfg, 16000, cache_mode="run")
     assert reopened.n_existing == 5
     assert reopened.has("w0")
-    assert reopened.add("w0", "s0", vec, 100, "vh0") is False
+    assert reopened.add("w0", "s0", vec, 100, "vh0", dataset_id="uaspeech",
+                        source_sha256="sha0") is False
 
     # different recipe -> different key/dir, no accidental reuse
     other = FeatureCache(base, _feat(n_mfcc=40), 16000, cache_mode="run")
@@ -134,7 +138,8 @@ def test_cache_roundtrip_reuse_and_delete(tmp_path):
     shutil.rmtree(cache.path)
     fresh = FeatureCache(base, cfg, 16000, cache_mode="run")
     assert fresh.n_existing == 0
-    assert fresh.add("w0", "s0", vec, 100, "vh0") is True
+    assert fresh.add("w0", "s0", vec, 100, "vh0", dataset_id="uaspeech",
+                     source_sha256="sha0") is True
 
 
 def test_feature_hash_ignores_labels_but_tracks_recipe_and_hz():

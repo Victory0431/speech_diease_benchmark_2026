@@ -42,7 +42,8 @@ def test_key_dim_and_cache_are_derived_from_the_recipe(tmp_path):
     cache = FeatureCache(tmp_path, cfg, 16000, cache_mode="shared")
     assert cache.path.name == key
     assert cache.dim == 26
-    cache.add("w1", "s1", np.zeros(26, dtype=np.float32), 100, "viewhash")
+    cache.add("w1", "s1", np.zeros(26, dtype=np.float32), 100, "viewhash",
+              dataset_id="demo", source_sha256="sha1")
     cache.finalize()
 
     meta = json.loads((cache.path / "meta.json").read_text(encoding="utf-8"))
