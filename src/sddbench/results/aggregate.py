@@ -34,10 +34,36 @@ def _slug(value: str) -> str:
 
 
 def _signature(run: dict, include_split: bool = True) -> str:
-    """Everything that makes a run the same experiment except the training seed."""
+    """Everything that makes a run the same experiment except the training seed.
+
+    Task/prepared version, view/feature identity, label definition and the
+    decision rule are all part of the key: runs that differ in any of them must
+    never be averaged into the same seed experiment.
+    """
     training = dict(run.get("training") or {})
     training.pop("seed", None)
+    cache = (run.get("data") or {}).get("feature_cache") or {}
+    evaluation = dict(run.get("evaluation") or {})
     payload = {
+        "task_id": run.get("task_id"),
+        "prepared_id": run.get("prepared_id"),
+        "features": {
+            "feature_key": cache.get("feature_key"),
+            "feature_hash": cache.get("feature_hash"),
+            "view_fingerprint": cache.get("view_fingerprint"),
+            "sample_rate": cache.get("sample_rate"),
+            "dim": cache.get("dim"),
+        },
+        "labels": {
+            "class_order": run.get("class_order"),
+            "positive_class": run.get("positive_class"),
+        },
+        "evaluation": {
+            "unit": run.get("evaluation_unit"),
+            "primary_unit": run.get("primary_unit"),
+            "binary_threshold": evaluation.get("binary_threshold"),
+            "selection_metric": run.get("selection_metric"),
+        },
         "model": run.get("model"),
         "training": training,
     }
@@ -48,7 +74,11 @@ def _signature(run: dict, include_split: bool = True) -> str:
 
 
 def load_runs(runs_root: str | Path) -> list[dict]:
-    """Every complete run pack, with its primary test block resolved."""
+    """Every *completed* run pack, with its primary test block resolved.
+
+    Failed/interrupted runs keep their run.json for diagnosis but must not enter
+    an aggregate or a leaderboard.
+    """
     runs_root = Path(runs_root)
     runs: list[dict] = []
     for run_dir in sorted(runs_root.iterdir()):
@@ -60,6 +90,8 @@ def load_runs(runs_root: str | Path) -> list[dict]:
             continue
         metrics = json.loads(metrics_file.read_text(encoding="utf-8"))
         run = json.loads(run_file.read_text(encoding="utf-8"))
+        if run.get("status") not in (None, "completed"):
+            continue
         unit = metrics.get("primary_unit") or metrics.get("evaluation_unit") or "subject"
         block = metrics["metrics"]["test"][unit]
         runs.append({
@@ -67,6 +99,7 @@ def load_runs(runs_root: str | Path) -> list[dict]:
             "metrics": metrics, "run": run, "unit": unit, "block": block,
             "dataset": metrics.get("dataset"), "experiment_id": run.get("experiment_id"),
             "seed": run.get("seed"), "split_id": run.get("split_id"),
+            "attempt": run.get("attempt"),
             "signature": _signature(run),
         })
     return runs
@@ -128,7 +161,15 @@ def subject_bootstrap(run_dir: Path, class_order: list[str], b: int,
         return [float(np.quantile(values, 0.025)), float(np.quantile(values, 0.975))]
 
     return {
+        "unit": "test_group",
+        "resample": "with_replacement",
+        "n_resamples": int(b),
+        "seed": int(seed),
         "n_groups": int(len(y)),
+        "n_effective_bacc": len(bacc),
+        "n_effective_auroc": len(auroc),
+        "n_skipped_missing_class": int(b - len(bacc)),
+        "missing_class_policy": "skip_resample",
         "balanced_accuracy_ci95": _ci(bacc),
         "auroc_ci95": _ci(auroc),
     }
@@ -150,7 +191,33 @@ def _summary(values: list[float | None], b: int, seed: int) -> dict:
     }
 
 
-def _write_figures(group_dir: Path, runs: list[dict], unit: str,
+def _seed_level(per_run: list[dict]) -> list[dict]:
+    """Collapse repeated runs of the same seed into attempts, not new samples."""
+    by_seed: dict = {}
+    for doc in per_run:
+        key = doc["seed"] if doc["seed"] is not None else f"run:{doc['run_id']}"
+        by_seed.setdefault(key, []).append(doc)
+    rows = []
+    for seed, attempts in by_seed.items():
+        attempts = sorted(attempts, key=lambda d: str(d["run_id"]))
+        row = {
+            "seed": attempts[0]["seed"],
+            "n_attempts": len(attempts),
+            "attempt_run_ids": [a["run_id"] for a in attempts],
+            "attempts": [a.get("attempt") for a in attempts],
+            "best_epoch": attempts[-1].get("best_epoch"),
+            "test_groups": attempts[-1].get("test_groups"),
+        }
+        for metric in METRICS:
+            values = [a[metric] for a in attempts if a[metric] is not None]
+            row[metric] = float(np.mean(values)) if values else None
+        rows.append(row)
+    rows.sort(key=lambda r: (r["seed"] if isinstance(r["seed"], int) else 10**9,
+                             str(r["seed"])))
+    return rows
+
+
+def _write_figures(group_dir: Path, seed_rows: list[dict], unit: str,
                    primary: dict) -> None:
     import matplotlib
     matplotlib.use("Agg")
@@ -159,8 +226,8 @@ def _write_figures(group_dir: Path, runs: list[dict], unit: str,
     figures = group_dir / "figures"
     figures.mkdir(parents=True, exist_ok=True)
 
-    values = [r["block"]["balanced_accuracy"] for r in runs]
-    labels = [f"s{r['seed']}" if r["seed"] is not None else "s?" for r in runs]
+    values = [r["balanced_accuracy"] for r in seed_rows]
+    labels = [f"s{r['seed']}" if r["seed"] is not None else "s?" for r in seed_rows]
     fig, ax = plt.subplots(figsize=(5.2, 3.2))
     ax.boxplot([v for v in values if v is not None], widths=0.4)
     xs = np.arange(1, len(values) + 1)
@@ -169,7 +236,7 @@ def _write_figures(group_dir: Path, runs: list[dict], unit: str,
     ax.set_xticklabels(labels, fontsize=8)
     ax.set_ylim(0.0, 1.05)
     ax.set_ylabel(f"test {unit} balanced accuracy")
-    ax.set_title("per-seed primary metric")
+    ax.set_title("per-seed primary metric (attempts averaged)")
     ax.grid(axis="y", alpha=0.25)
     fig.tight_layout()
     fig.savefig(figures / "seed_boxplot.png", dpi=150)
@@ -211,9 +278,11 @@ def aggregate_runs(runs_root: str | Path, out_root: str | Path,
         group_dir.mkdir(parents=True, exist_ok=True)
 
         per_run: list[dict] = []
+        attempt_counter: dict = {}
         for item in items:
             doc = {
                 "run_id": item["run_id"], "seed": item["seed"],
+                "attempt": item.get("attempt"),
                 "best_epoch": item["run"].get("best_epoch"),
                 "test_groups": item["block"].get("n"),
             }
@@ -224,8 +293,15 @@ def aggregate_runs(runs_root: str | Path, out_root: str | Path,
             if boot:
                 doc["subject_bootstrap"] = boot
             per_run.append(doc)
+        # Older runs have no attempt field: number them in run-id order per seed.
+        for doc in per_run:
+            if doc.get("attempt") is None:
+                key = doc["seed"]
+                attempt_counter[key] = attempt_counter.get(key, 0) + 1
+                doc["attempt"] = attempt_counter[key]
+        seed_rows = _seed_level(per_run)
 
-        primary = {m: _summary([r[m] for r in per_run], bootstrap, seed)
+        primary = {m: _summary([r[m] for r in seed_rows], bootstrap, seed)
                    for m in METRICS}
         payload = {
             "aggregate_version": AGGREGATE_VERSION,
@@ -234,12 +310,25 @@ def aggregate_runs(runs_root: str | Path, out_root: str | Path,
             "split_id": items[0]["split_id"],
             "dropout": (items[0]["run"].get("model") or {}).get("dropout"),
             "contract_version": items[0]["metrics"].get("contract_version"),
-            "seeds": [r["seed"] for r in per_run],
+            "seeds": [r["seed"] for r in seed_rows],
+            "n_seeds": len(seed_rows),
             "n_runs": len(per_run),
+            "attempts_per_seed": {str(r["seed"]): r["n_attempts"] for r in seed_rows},
+            "seed_level": seed_rows,
+            "bootstrap": {
+                "axis": "training_seed",
+                "unit": "seed_mean",
+                "n_resamples": int(bootstrap),
+                "seed": int(seed),
+                "note": "repeated runs of one seed are averaged as attempts",
+            },
+            "seed_statistics": primary,
             "primary": primary,
             "runs": per_run,
             "notes": [
-                "ci95_runs is a percentile bootstrap over seeds (descriptive only).",
+                "ci95_runs is a percentile bootstrap over training seeds (descriptive only).",
+                "Same-seed reruns are attempts: they are averaged per seed and do not "
+                "increase the seed count.",
                 "subject_bootstrap resamples test groups locally and is never published.",
             ],
         }
@@ -247,7 +336,7 @@ def aggregate_runs(runs_root: str | Path, out_root: str | Path,
             json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         (group_dir / "aggregate.md").write_text(
             _render_group(payload), encoding="utf-8")
-        _write_figures(group_dir, items, unit, primary)
+        _write_figures(group_dir, seed_rows, unit, primary)
 
         row = {
             "dataset": dataset, "experiment_id": experiment_id,
@@ -255,7 +344,11 @@ def aggregate_runs(runs_root: str | Path, out_root: str | Path,
             "split_id": items[0]["split_id"],
             "dropout": (items[0]["run"].get("model") or {}).get("dropout"),
             "n_runs": len(per_run),
-            "seeds": "/".join("?" if s is None else str(s) for s in payload["seeds"]),
+            "n_seeds": len(seed_rows),
+            "seeds": "/".join(
+                "?" if r["seed"] is None else
+                (f"{r['seed']}x{r['n_attempts']}" if r["n_attempts"] > 1 else str(r["seed"]))
+                for r in seed_rows),
             "group_dir": str(group_dir.relative_to(out_root)),
         }
         for metric in ("balanced_accuracy", "auroc", "f1"):
@@ -350,20 +443,23 @@ def _render_group(payload: dict) -> str:
     lines = [
         f"# {payload['dataset']} / {payload['experiment_id']}：多 seed 汇总",
         "",
-        f"- 主评价单位：**{unit}**；运行数：`{payload['n_runs']}`；"
-        f"seeds：`{payload['seeds']}`",
+        f"- 主评价单位：**{unit}**；独立训练 seed 数：`{payload.get('n_seeds', payload['n_runs'])}`；"
+        f"run/attempt 数：`{payload['n_runs']}`；尝试分布：`{payload.get('attempts_per_seed')}`",
         f"- 划分：`{payload['split_id']}`；配置签名：`{payload['signature']}`；"
         f"dropout：`{_fmt(payload.get('dropout'))}`",
+        "- 同一 seed 的重复执行按 attempt 处理：先在该 seed 内取均值，再跨 seed 统计，"
+        "不会把重复执行当成新增 seed。",
         f"- 结果契约：`{payload['contract_version'] or 'unknown'}`；"
         f"聚合版本：`{payload['aggregate_version']}`",
         "- 跨 seed 的 95% 区间是对 seed 做百分位 bootstrap，只描述波动，不做显著性宣称。",
         "",
-        "| run | seed | test groups | bAcc | AUROC | F1 | sens | spec |",
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| run | seed | attempt | test groups | bAcc | AUROC | F1 | sens | spec |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for run in payload["runs"]:
         lines.append(
-            f"| {run['run_id']} | {_fmt(run['seed'])} | {_fmt(run['test_groups'])} | "
+            f"| {run['run_id']} | {_fmt(run['seed'])} | {_fmt(run.get('attempt'))} | "
+            f"{_fmt(run['test_groups'])} | "
             f"{_fmt(run['balanced_accuracy'])} | {_fmt(run['auroc'])} | "
             f"{_fmt(run['f1'])} | {_fmt(run['sensitivity'])} | "
             f"{_fmt(run['specificity'])} |")

@@ -35,6 +35,10 @@ def publish_run(run_dir: str | Path, dest_root: str | Path) -> Path:
     metrics = json.loads(metrics_file.read_text(encoding="utf-8"))
     validate_metrics(metrics)
     run = json.loads(run_file.read_text(encoding="utf-8"))
+    if run.get("status") not in (None, "completed"):
+        raise ResultsContractError(
+            f"run {run_dir.name} status={run.get('status')!r}; only completed runs "
+            "can be published")
 
     dataset = str(metrics["dataset"])
     run_id = str(metrics["run_id"])

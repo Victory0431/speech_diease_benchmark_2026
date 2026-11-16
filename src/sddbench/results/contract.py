@@ -97,9 +97,37 @@ def sanitize_run_meta(run: dict) -> dict:
         "benchmark_eligible": bool(run.get("benchmark_eligible")),
         "scientific_status": run.get("scientific_status"),
         "seed": run.get("seed"),
+        "seed_role": run.get("seed_role"),
+        "attempt": run.get("attempt"),
         "model": run.get("model"),
         "training": _sanitize_training(run.get("training")),
         "best_epoch": run.get("best_epoch"),
+        "trained_epochs": run.get("trained_epochs"),
+        "selection_metric": run.get("selection_metric"),
+        "evaluation": run.get("evaluation"),
+        "task": {
+            "task_hash": (run.get("task") or {}).get("task_hash")
+            or run.get("task_hash"),
+            "grouping": (run.get("task") or {}).get("grouping") or run.get("grouping"),
+            "labels": (run.get("task") or {}).get("labels"),
+        },
+        "preprocess": {
+            "path": (run.get("preprocess") or {}).get("path"),
+            "fingerprint": (run.get("preprocess") or {}).get("fingerprint"),
+            "config": (run.get("preprocess") or {}).get("config"),
+        },
+        "feature": {
+            key: (run.get("feature") or {}).get(key)
+            for key in ("path", "recipe_id", "feature_key", "feature_hash",
+                        "sample_rate", "dim", "config")
+        },
+        "identity": ({k: v for k, v in (run.get("identity") or {}).items()
+                      if k != "task_snapshot"} or None),
+        "labels": run.get("labels"),
+        "checkpoints": ({role: {k: v for k, v in (info or {}).items() if k != "file"}
+                         for role, info in (run.get("checkpoints") or {}).items()} or None),
+        "coverage": run.get("coverage"),
+        "completion": run.get("completion"),
         "best_val_balanced_accuracy":
             run.get("best_val_balanced_accuracy",
                     run.get("best_val_subject_balanced_accuracy")),

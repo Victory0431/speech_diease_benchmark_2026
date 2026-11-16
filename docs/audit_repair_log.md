@@ -14,11 +14,11 @@
 | F02 | P0 | 无人员信息默认按文件分组并自动 approved | fixed | A | `identity` 与 `label` 证据分离；`benchmark_eligible` 默认 false |
 | F03 | P0 | AP/ROC 对并列分数处理错误 | fixed | B | 按唯一阈值分组；AP/ROC 与图同源；行序不变 |
 | F04 | P0 | task/manifest/原件/缓存身份未闭环 | fixed | C | task 快照+内容指纹；manifest/split 重算校验；缓存绑定 dataset/source |
-| F05 | P0 | aggregate 签名遗漏前端/准备版本/类别 | in_progress | D | 待补 |
+| F05 | P0 | aggregate 签名遗漏前端/准备版本/类别 | fixed | D | 聚合键覆盖 task/prepared/view/feature/labels/threshold；同 seed 记 attempt |
 | F06 | P1 | 阈值不生效；配置校验不统一 | fixed | B | `binary_threshold` 全链路生效；严格校验 |
 | F07 | P1 | 训练用源 Hz 找缓存，重采样接不通 | fixed | C | 缓存/加载/训练统一用 processed Hz，覆盖 16k→8k、44.1k→16k |
 | F08 | P1 | 网页改特征只写 YAML，C0 开关不可用 | in_progress | E | 待补 |
-| F09 | P0 | run 太晚建立、缺快照、`last.pt` 语义不真 | in_progress | D | 待补 |
+| F09 | P0 | run 太晚建立、缺快照、`last.pt` 语义不真 | fixed | D | 开始即建 run；失败/中断留痕；true last 权重；产物+覆盖校验后才 completed |
 | F10 | P1 | `ratio_longer_than_L` 漏除样本数 | fixed | B | 比例已除以 n，并限制在 [0,1] |
 | F11 | P1 | 文档称 ffmpeg 解码后备，实际只有 probe | in_progress | E | 待补 |
 | F12 | P1 | 人员权重在全部集合上归一 | fixed | B | 权重只在 train 内计算与归一 |
@@ -207,7 +207,68 @@ sddbench extract-features \
 
 ## 批次 D（F05、F09）
 
-待补。
+### F09 run 生命周期与快照
+
+- **复现**：旧 `run_experiment` 先训练、结束后才创建 run 目录并直接写
+  `status: completed`；训练中途异常无任何记录；`last.pt` 实际保存的是 best
+  权重；`run.json` 只记配置文件路径；`predictions_windows.csv` 的
+  `window_id` 直接等于 `sample_id`，`valid_seconds` 用原始总时长。
+- **修复**：
+  - 进入 `run_experiment` 先创建唯一 run 目录并写 `run.json`
+    （`status=running`, `phase=created`）与 `config.yaml`；随后才加载数据；
+  - `status` 状态机：`running → completed | failed | interrupted`；
+    `KeyboardInterrupt/SystemExit` 记 `interrupted`，其它异常记 `failed`，
+    均保存 `error`、`finished_at` 与最初配置；
+  - 只有 `_verify_run_artifacts` 检查全部必需产物非空、且每个 split 的
+    window/group 预测数与期望一致后，才写 `status=completed`；
+    否则以 `completion_errors` 记录并抛错，run 保持 failed；
+  - run 包保存展开后的 `task/preprocess/feature/model/training/evaluation`
+    实际解析内容、标签定义、输入清单（manifest/split/task 快照/
+    preprocess/features/feature index）、命令、Python/torch/numpy 版本、
+    平台、cwd、torch 线程数；
+  - git 记录 `commit/dirty/dirty_files`；dirty 时额外执行
+    `git stash create` 保存可恢复的 dangling commit（不改工作区）；
+  - `config_hash` 纳入标签定义、task_hash、view fingerprint、feature_hash、
+    processed Hz、阈值与评价单位；
+  - `best.pt`：`role=best_val_selection`，记录选择指标/方向/val 分数/epoch；
+    `last.pt`：`role=last_epoch`，保存**最后实际训练 epoch** 的权重，
+    并显式 `resume_supported: false`（不伪造可续训状态）；
+  - `window_id` 取自特征缓存真实窗口行；`valid_seconds = valid_frames /
+    processed_sample_rate`（不含 padding），不再用 sample_id/原始总时长。
+- **测试**：`tests/test_modeling.py`
+  `test_run_lifecycle_records_identity_window_facts_and_checkpoint_roles`、
+  `test_failed_run_keeps_config_identity_and_failure_reason`、
+  `test_same_config_rerun_is_recorded_as_attempt_not_new_seed`；
+  `tests/test_results.py` 的 failed/attempt/sanitize 用例。
+- **历史结果影响**：旧 run 仍保留原件；其 `run.json` 缺 `identity/attempt/
+  checkpoints`，按 legacy 解读。需要新协议留痕或 last 权重语义的结果必须重训。
+
+### F05 aggregate 比较键与 attempt
+
+- **复现**：旧签名只含 model/training（去掉 seed）与 split；不同
+  prepared/task/特征/类别顺序/阈值/评价单位的 run 会被平均到同一组；
+  同 seed 重复执行被当作独立 seed 增加样本量。
+- **修复**：
+  - `_signature` 覆盖 task_id、prepared_id、feature_key/feature_hash/
+    view_fingerprint/processed Hz/dim、class_order、positive_class、
+    binary_threshold、evaluation_unit、selection_metric、model 与除 seed 外的
+    training；split_sensitivity 只放宽 split_id；
+  - `load_runs` 只收 `status in (completed, 旧无状态)`，failed/interrupted 不进入
+    聚合与发布；
+  - 同 seed 的多次 run 按 attempt 归并：先在 seed 内取均值，再跨 seed 统计；
+    `aggregate.json` 记录 `n_seeds/n_runs/attempts_per_seed/seed_level`；
+  - bootstrap 明确 `axis=training_seed, unit=seed_mean`；
+  - `subject_bootstrap` 记录 `n_resamples/seed/unit/resample/n_groups/
+    n_effective_*/n_skipped_missing_class/missing_class_policy`；
+  - `publish_run` 拒绝非 completed run。
+- **测试**：`tests/test_results.py`
+  `test_aggregate_merges_same_seed_attempts_without_inflating_seed_count`
+  （3 次执行、2 个 seed、均值 0.85）、
+  `test_aggregate_never_mixes_feature_identity_or_threshold`、
+  `test_failed_run_is_not_aggregated_or_published`。
+- **历史结果影响**：旧 aggregate 目录仍是旧签名产物，不覆盖；需要新比较键时
+  重新执行 `sddbench aggregate`。旧 run 指标不需要重算，但若要与新 run
+  合并统计，必须确认其特征/标签/阈值身份一致。
 
 ## 批次 E（F08、F11）
 

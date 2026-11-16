@@ -151,5 +151,9 @@ def load_features(workspace_root: Path, feature_cfg: dict, sample_ids: list[str]
         "sample_rate": int(processed_sample_rate),
         "dim": dim,
         "n_samples": len(matrix),
+        # Ordered like `sample_ids` / the manifest: the trainer must report the
+        # real window identity and the actually valid (non-padding) duration.
+        "window_ids": part["window_id"].astype(str).tolist(),
+        "valid_frames": part["valid_frames"].astype(int).tolist(),
     }
     return matrix, info

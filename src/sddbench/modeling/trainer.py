@@ -25,7 +25,7 @@ from ..data.windows import normalize_preprocess, preprocess_fingerprint
 from ..features.registry import normalize_feature_config, recipe_id
 from ..results.contract import CONTRACT_VERSION, validate_metrics
 from .experiment import config_hash, validate_experiment
-from .features import load_features
+from .features import FeatureLoadError, load_features
 from .metrics import binary_metrics, decide_binary, per_class_rows
 from .mlp import MLP
 from .report import render_run_report, write_figures
@@ -50,15 +50,75 @@ def set_seed(seed: int) -> None:
     torch.set_num_threads(1)
 
 
+def _write_json(path: Path, payload: dict) -> None:
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str),
+                   encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def _environment() -> dict:
+    return {
+        "python": sys.version.split()[0],
+        "torch": torch.__version__,
+        "numpy": np.__version__,
+        "platform": platform.platform(),
+        "cwd": str(Path.cwd()),
+        "command": list(sys.argv),
+        "torch_threads": torch.get_num_threads(),
+    }
+
+
 def _git_commit(repo_root: Path) -> dict:
     try:
         sha = subprocess.check_output(
             ["git", "rev-parse", "HEAD"], cwd=repo_root, text=True).strip()
-        dirty = bool(subprocess.check_output(
-            ["git", "status", "--porcelain"], cwd=repo_root, text=True).strip())
-        return {"commit": sha, "dirty": dirty}
-    except Exception:
-        return {"commit": None, "dirty": None}
+        status = subprocess.check_output(
+            ["git", "status", "--porcelain"], cwd=repo_root, text=True)
+        dirty = bool(status.strip())
+        stash = None
+        if dirty:
+            # `git stash create` snapshots tracked changes into a dangling commit
+            # without touching the worktree, so a dirty run still has a
+            # recoverable code state (apply with `git stash apply <sha>`).
+            stash = subprocess.check_output(
+                ["git", "stash", "create"], cwd=repo_root, text=True).strip() or None
+        changed = [line[3:] for line in status.splitlines() if line.strip()]
+        return {"commit": sha, "dirty": dirty, "stash_commit": stash,
+                "dirty_files": changed[:50], "n_dirty_files": len(changed)}
+    except Exception as e:
+        return {"commit": None, "dirty": None, "error": f"{type(e).__name__}: {e}"}
+
+
+REQUIRED_RUN_ARTIFACTS = (
+    "config.yaml", "metrics.json", "history.csv", "metrics_per_class.csv",
+    "predictions_windows.csv", "predictions_recordings.csv",
+    "predictions_subjects.csv", "feature_cache.json", "report.md",
+    "best.pt", "last.pt",
+    "inputs/manifest.csv", "inputs/split.csv", "inputs/task.yaml",
+    "inputs/preprocess.yaml", "inputs/features.yaml",
+)
+
+
+def _verify_run_artifacts(out_dir: Path, coverage: dict) -> list[str]:
+    """Return human-readable problems; empty means the pack may be completed."""
+    problems = []
+    for name in REQUIRED_RUN_ARTIFACTS:
+        path = out_dir / name
+        if not path.is_file():
+            problems.append(f"missing artifact: {name}")
+        elif path.stat().st_size == 0:
+            problems.append(f"empty artifact: {name}")
+    for split, counts in coverage.items():
+        if counts["n_predicted"] != counts["n_expected"]:
+            problems.append(
+                f"{split}: predicted {counts['n_predicted']} windows, "
+                f"expected {counts['n_expected']}")
+        if counts["n_predicted_subjects"] != counts["n_expected_subjects"]:
+            problems.append(
+                f"{split}: predicted {counts['n_predicted_subjects']} groups, "
+                f"expected {counts['n_expected_subjects']}")
+    return problems
 
 
 def load_run_data(cfg: dict, workspace: Path, repo_root: Path) -> dict:
@@ -200,10 +260,13 @@ def load_run_data(cfg: dict, workspace: Path, repo_root: Path) -> dict:
     sample_ids = merged["sample_id"].astype(str).tolist()
     source_hashes = {str(s): str(h) for s, h in
                      zip(merged["sample_id"], merged["sha256"])}
-    X, cache_info = load_features(workspace, feature_cfg, sample_ids, processed_rate,
-                                  dataset_id=str(cfg["dataset"]),
-                                  source_hashes=source_hashes,
-                                  view_fingerprint=view_fingerprint)
+    try:
+        X, cache_info = load_features(workspace, feature_cfg, sample_ids, processed_rate,
+                                      dataset_id=str(cfg["dataset"]),
+                                      source_hashes=source_hashes,
+                                      view_fingerprint=view_fingerprint)
+    except FeatureLoadError as e:
+        raise RunError(str(e)) from e
 
     return {
         "task_id": task_id, "manifest": manifest, "split": split,
@@ -218,6 +281,8 @@ def load_run_data(cfg: dict, workspace: Path, repo_root: Path) -> dict:
         "manifest_file": manifest_file, "split_file": split_file,
         "split_dir": split_dir,
         "task_snapshot_file": task_snapshot_file,
+        "task_cfg": task_cfg,
+        "preprocess_cfg": preprocess_cfg,
         "task_hash": task_hash,
         "manifest_fingerprint": manifest_fp,
         "split_fingerprint": split_fp,
@@ -292,7 +357,58 @@ def _evaluate(frame: pd.DataFrame, probs: np.ndarray, class_order: list[str],
 
 def run_experiment(cfg: dict, workspace: Path, repo_root: Path,
                    run_root: Path | None = None) -> dict:
+    """Create the run record first, then train into it.
+
+    The run directory and a `run.json` with status=running exist before any data
+    is loaded, so a crash or interrupt still leaves the configuration, code
+    revision and failure reason on disk. Status only becomes `completed` after
+    every required artifact exists and the prediction coverage check passes.
+    """
+    validate_experiment(cfg)
     started = _now()
+    run_id = _make_run_id(cfg, run_root)
+    out_dir = (run_root or (workspace / "runs")) / run_id
+    out_dir.mkdir(parents=True, exist_ok=False)
+    (out_dir / "figures").mkdir()
+    (out_dir / "inputs").mkdir()
+    meta = {
+        "run_id": run_id, "status": "running", "phase": "created",
+        "attempt": 1,
+        "experiment_id": cfg["experiment_id"],
+        "experiment_name": cfg.get("experiment_name") or cfg["experiment_id"],
+        "experiment_group": cfg.get("experiment_group"),
+        "purpose": cfg.get("purpose"), "stage": cfg.get("stage"),
+        "dataset": cfg["dataset"], "task_id": cfg.get("task_id"),
+        "prepared_id": cfg["prepared_id"], "split_id": cfg["split_id"],
+        "seed": int(cfg["training"]["seed"]),
+        "seed_role": "training",
+        "started_at": started,
+        "config_hash": config_hash(cfg),
+        "code_version": __version__,
+        "git": _git_commit(repo_root),
+        "environment": _environment(),
+        "config": copy.deepcopy(cfg),
+        "out_dir": str(out_dir),
+    }
+    _write_json(out_dir / "run.json", meta)
+    with (out_dir / "config.yaml").open("w", encoding="utf-8") as f:
+        yaml.safe_dump(cfg, f, allow_unicode=True, sort_keys=False)
+    try:
+        return _train_into(cfg, workspace, repo_root, out_dir, started, run_id, meta)
+    except BaseException as e:  # keep configuration/status even on Ctrl-C
+        interrupted = isinstance(e, (KeyboardInterrupt, SystemExit))
+        meta.update({
+            "status": "interrupted" if interrupted else "failed",
+            "phase": "interrupted" if interrupted else "failed",
+            "finished_at": _now(),
+            "error": f"{type(e).__name__}: {e}",
+        })
+        _write_json(out_dir / "run.json", meta)
+        raise
+
+
+def _train_into(cfg: dict, workspace: Path, repo_root: Path, out_dir: Path,
+                started: str, run_id: str, meta: dict) -> dict:
     data = load_run_data(cfg, workspace, repo_root)
     seed = int(cfg["training"]["seed"])
     set_seed(seed)
@@ -411,29 +527,35 @@ def run_experiment(cfg: dict, workspace: Path, repo_root: Path,
             stale += 1
             if stale >= patience:
                 break
+    last_state = copy.deepcopy(model.state_dict())
+    last_epoch = int(history[-1]["epoch"]) if history else 0
     model.load_state_dict(best_state)
 
     batch_size = int(cfg["training"]["batch_size"])
     probs = _predict(model, Z, device, batch_size)
     metrics = {}
     predictions = {"window": [], "recording": [], "subject": []}
+    window_ids = list(data["cache_info"]["window_ids"])
+    valid_frames = list(data["cache_info"]["valid_frames"])
+    processed_rate = int(data["sample_rate"])
     for split in ("train", "val", "test"):
         mask = splits == split
         frame = merged.loc[mask, ["sample_id", "group_id", "label", "split"]]
         part_probs = probs[mask]
         metrics[split] = _evaluate(frame, part_probs, class_order, positive_index, threshold)
         pred = decide_binary(part_probs[:, positive_index], threshold)
-        durations = merged.loc[mask, "duration_decoded_sec"] \
-            if "duration_decoded_sec" in merged.columns else pd.Series([None] * int(mask.sum()))
-        for pos, (_, row) in enumerate(frame.iterrows()):
-            duration = durations.iloc[pos]
+        positions = np.where(mask)[0]
+        for pos, global_pos in enumerate(positions):
+            row = merged.iloc[global_pos]
+            # Window facts come from the feature cache, not from sample_id or the
+            # original file duration: valid_seconds excludes zero padding.
             item = {
                 "split": split,
-                "window_id": row["sample_id"],  # one w0 window per recording in this baseline
+                "window_id": window_ids[global_pos],
                 "sample_id": row["sample_id"],
                 "subject_id": row["group_id"],
                 "y_true": row["label"],
-                "valid_seconds": None if pd.isna(duration) else float(duration),
+                "valid_seconds": round(int(valid_frames[global_pos]) / processed_rate, 6),
             }
             for i, name in enumerate(class_order):
                 item[f"prob_{name}"] = float(part_probs[pos, i])
@@ -456,12 +578,6 @@ def run_experiment(cfg: dict, workspace: Path, repo_root: Path,
             item["correct"] = int(item["y_pred"] == row["label"])
             predictions["subject"].append(item)
 
-    run_id = _make_run_id(cfg, run_root)
-    out_dir = (run_root or (workspace / "runs")) / run_id
-    out_dir.mkdir(parents=True, exist_ok=False)
-    (out_dir / "figures").mkdir()
-    (out_dir / "inputs").mkdir()
-
     pd.DataFrame(history).to_csv(out_dir / "history.csv", index=False)
     pd.DataFrame(predictions["window"]).to_csv(out_dir / "predictions_windows.csv", index=False)
     pd.DataFrame(predictions["recording"]).to_csv(
@@ -475,8 +591,69 @@ def run_experiment(cfg: dict, workspace: Path, repo_root: Path,
     subject_counts = {s: len(set(groups[splits == s])) for s in ("train", "val", "test")}
     elapsed = (_dt.datetime.fromisoformat(_now())
                - _dt.datetime.fromisoformat(started)).total_seconds()
+    identity = {
+        "task_snapshot": str(data["task_snapshot_file"]),
+        "task_hash": data["task_hash"],
+        "manifest_fingerprint": data["manifest_fingerprint"],
+        "split_fingerprint": data["split_fingerprint"],
+        "prepared_id": cfg["prepared_id"], "split_id": cfg["split_id"],
+    }
+    scientific_context = {
+        **identity,
+        "view_fingerprint": data["view_fingerprint"],
+        "feature_hash": data["cache_info"]["feature_hash"],
+        "feature_dim": int(X.shape[1]),
+        "processed_sample_rate": data["sample_rate"],
+        "class_order": class_order,
+        "positive_class": data["positive_class"],
+        "binary_threshold": threshold,
+        "evaluation_unit": unit,
+        "selection_metric": selection_metric,
+    }
+    scientific_hash = config_hash(cfg, context=scientific_context)
+    attempt = _attempt_number(out_dir.parent, run_id, seed, scientific_hash)
+    meta.update({
+        "config_hash": scientific_hash, "attempt": attempt,
+        "phase": "data_loaded", "identity": identity,
+        "task_hash": data["task_hash"],
+        "benchmark_eligible": bool(data["benchmark_eligible"]),
+        "scientific_status": data["scientific_status"],
+        "task": {"config": data["task_cfg"], "grouping": grouping,
+                 "labels": (data["task_cfg"].get("labels") or {})},
+        "preprocess": {"path": data["preprocess_rel"],
+                       "fingerprint": data["view_fingerprint"],
+                       "config": data["preprocess_cfg"]},
+        "feature": {"path": cfg["features"]["config"],
+                    "config": data["feature_cfg"],
+                    "recipe_id": recipe_id(data["feature_cfg"]),
+                    "feature_key": data["cache_info"].get("feature_key"),
+                    "feature_hash": data["cache_info"].get("feature_hash"),
+                    "sample_rate": data["sample_rate"],
+                    "dim": int(X.shape[1])},
+        "labels": {"class_order": class_order,
+                   "positive_class": data["positive_class"],
+                   "source": "experiment_config" if (cfg.get("labels") or {})
+                   else "task_snapshot"},
+        "model": cfg["model"], "training": cfg["training"],
+        "evaluation": cfg["evaluation"],
+        "evaluation_unit": unit, "grouping": grouping,
+        "selection_metric": selection_metric,
+    })
+    coverage = {}
+    for split in ("train", "val", "test"):
+        expected_subjects = len(set(groups[splits == split]))
+        predicted_subjects = len({p["subject_id"] for p in predictions["subject"]
+                                  if p["split"] == split})
+        coverage[split] = {
+            "n_expected": int((splits == split).sum()),
+            "n_predicted": int(sum(1 for p in predictions["window"]
+                                   if p["split"] == split)),
+            "n_expected_subjects": expected_subjects,
+            "n_predicted_subjects": predicted_subjects,
+        }
     job = {
-        "run_id": run_id, "status": "completed",
+        "run_id": run_id, "attempt": attempt, "phase": "training_done",
+        "status": "running",
         "experiment_id": cfg["experiment_id"],
         "experiment_name": cfg.get("experiment_name") or cfg["experiment_id"],
         "experiment_group": cfg.get("experiment_group"),
@@ -484,11 +661,13 @@ def run_experiment(cfg: dict, workspace: Path, repo_root: Path,
         "task_id": data["task_id"], "dataset": cfg["dataset"],
         "out_dir": str(out_dir), "elapsed_sec": round(elapsed, 2),
         "prepared_id": cfg["prepared_id"], "split_id": cfg["split_id"],
-        "config_hash": config_hash(cfg), "seed": seed,
+        "config_hash": scientific_hash, "seed": seed, "seed_role": "training",
         "started_at": started, "finished_at": _now(),
-        "code_version": __version__, "git": _git_commit(repo_root),
-        "environment": {"python": sys.version.split()[0], "torch": torch.__version__,
-                        "numpy": np.__version__, "platform": platform.platform()},
+        "code_version": __version__, "git": meta["git"],
+        "environment": meta["environment"],
+        "identity": identity,
+        "task": meta["task"], "preprocess": meta["preprocess"],
+        "feature": meta["feature"], "labels": meta["labels"],
         "data": {
             "manifest": str(data["manifest_file"]), "split": str(data["split_file"]),
             "split_summary": json.loads((data["split_dir"] / "split.json").read_text(
@@ -499,12 +678,7 @@ def run_experiment(cfg: dict, workspace: Path, repo_root: Path,
             "original_sample_rates": data["original_sample_rates"],
             "feature_dim": int(X.shape[1]),
             "feature_cache": data["cache_info"],
-            "identity": {
-                "task_snapshot": str(data["task_snapshot_file"]),
-                "task_hash": data["task_hash"],
-                "manifest_fingerprint": data["manifest_fingerprint"],
-                "split_fingerprint": data["split_fingerprint"],
-            },
+            "identity": identity,
         },
         "class_order": class_order, "positive_class": data["positive_class"],
         "benchmark_eligible": bool(data["benchmark_eligible"]),
@@ -527,6 +701,7 @@ def run_experiment(cfg: dict, workspace: Path, repo_root: Path,
         "best_epoch": best_epoch,
         "best_val_balanced_accuracy": best_score,
         "best_val_subject_balanced_accuracy": best_score,
+        "trained_epochs": last_epoch,
         "metrics": metrics,
         "scaler": {"mean": scaler_mean.tolist(), "std": scaler_std.tolist()},
         "outputs": {
@@ -535,21 +710,39 @@ def run_experiment(cfg: dict, workspace: Path, repo_root: Path,
             "predictions_subjects": str(out_dir / "predictions_subjects.csv"),
             "predictions_recordings": str(out_dir / "predictions_recordings.csv"),
             "best_model": str(out_dir / "best.pt"),
+            "last_model": str(out_dir / "last.pt"),
+            "feature_index": str(out_dir / "inputs" / "feature_index.csv"),
             "report": str(out_dir / "report.md"),
         },
+        "coverage": coverage,
+        "checkpoints": {
+            "best": {"file": str(out_dir / "best.pt"), "role": "best_val_selection",
+                     "best_epoch": best_epoch, "val_score": best_score},
+            "last": {"file": str(out_dir / "last.pt"), "role": "last_epoch",
+                     "epoch": last_epoch, "resume_supported": False},
+        },
+    }
+    selection = {
+        "selection_metric": selection_metric, "selection_direction": "max",
+        "val_score": best_score, "best_epoch": best_epoch,
+        "trained_epochs": last_epoch,
     }
     checkpoint = {"state_dict": model.state_dict(), "model": cfg["model"],
                   "input_dim": int(X.shape[1]), "class_order": class_order,
                   "scaler_mean": scaler_mean.tolist(), "scaler_std": scaler_std.tolist(),
-                  "best_epoch": best_epoch}
+                  "best_epoch": best_epoch, "role": "best_val_selection",
+                  **selection}
+    # Semantics are explicit: best.pt holds the early-stopping-selected weights,
+    # last.pt holds the weights after the final epoch actually trained. Resume is
+    # not implemented, so it is declared unsupported instead of faking it.
     torch.save(checkpoint, out_dir / "best.pt")
-    torch.save({**checkpoint, "epoch": int(history[-1]["epoch"]),
-                "history": history}, out_dir / "last.pt")
-    coverage = {
-        split: {"n_expected": int((splits == split).sum()),
-                "n_predicted": int(sum(1 for p in predictions["window"]
-                                       if p["split"] == split))}
-        for split in ("train", "val", "test")}
+    torch.save({
+        **checkpoint, "state_dict": last_state,
+        "role": "last_epoch", "epoch": last_epoch,
+        "best_epoch": best_epoch, "history": history,
+        "resume_supported": False,
+        "checkpoint_note": "last epoch weights; not a resumable optimizer state",
+    }, out_dir / "last.pt")
     warnings = []
     for split in ("train", "val", "test"):
         for level in ("window", "recording", "subject"):
@@ -560,17 +753,20 @@ def run_experiment(cfg: dict, workspace: Path, repo_root: Path,
         "task_id": data["task_id"],
         "dataset": cfg["dataset"],
         "class_order": class_order,
+        "label_definition": {"class_order": class_order,
+                             "positive_class": data["positive_class"]},
         "evaluation_unit": unit,
         "primary_unit": unit,
         "grouping": grouping,
         "positive_class": data["positive_class"],
         "primary_metric": "balanced_accuracy",
         "primary_split": "test",
-        "probability_threshold": 0.5,
+        "probability_threshold": threshold,
         "metrics": job["metrics"],
         "coverage": coverage,
         "warnings": warnings,
-        "config_hash": job["config_hash"],
+        "config_hash": scientific_hash,
+        "identity": identity,
         "contract_version": CONTRACT_VERSION,
     }
     validate_metrics(metrics_doc)
@@ -592,20 +788,60 @@ def run_experiment(cfg: dict, workspace: Path, repo_root: Path,
         for row in rows:
             per_class.append({"split": split, "level": "subject", **row})
     pd.DataFrame(per_class).to_csv(out_dir / "metrics_per_class.csv", index=False)
-    (out_dir / "feature_cache.json").write_text(
-        json.dumps(data["cache_info"], ensure_ascii=False, indent=2), encoding="utf-8")
+    _write_json(out_dir / "feature_cache.json", data["cache_info"])
     with (out_dir / "config.yaml").open("w", encoding="utf-8") as f:
         yaml.safe_dump(cfg, f, allow_unicode=True, sort_keys=False)
-    (out_dir / "run.json").write_text(
-        json.dumps(job, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+    # Inputs: the frozen task snapshot is the scientific source of truth; the
+    # mutable repo copy is only kept as provenance.
     shutil.copy2(data["manifest_file"], out_dir / "inputs" / "manifest.csv")
     shutil.copy2(data["split_file"], out_dir / "inputs" / "split.csv")
-    task_file = repo_root / "configs" / "datasets" / f"{data['task_id']}.yaml"
-    if task_file.is_file():
-        shutil.copy2(task_file, out_dir / "inputs" / "task.yaml")
+    shutil.copy2(data["task_snapshot_file"], out_dir / "inputs" / "task.yaml")
+    shutil.copy2(repo_root / data["preprocess_rel"], out_dir / "inputs" / "preprocess.yaml")
+    shutil.copy2(repo_root / cfg["features"]["config"],
+                 out_dir / "inputs" / "features.yaml")
+    shutil.copy2(Path(data["cache_info"]["cache_dir"]) / "index.csv",
+                 out_dir / "inputs" / "feature_index.csv")
     write_figures(out_dir, job, probs, splits, merged, class_order)
     (out_dir / "report.md").write_text(render_run_report(job), encoding="utf-8")
+
+    problems = _verify_run_artifacts(out_dir, coverage)
+    if problems:
+        meta.update({"phase": "incomplete", "coverage": coverage,
+                     "completion_errors": problems})
+        raise RunError("run pack failed the completion check: " + "; ".join(problems))
+    job.update({
+        "status": "completed", "phase": "completed", "finished_at": _now(),
+        "completion": {"verified": True, "coverage_ok": True,
+                       "required_artifacts": len(REQUIRED_RUN_ARTIFACTS)},
+    })
+    _write_json(out_dir / "run.json", job)
+    meta.update(job)
     return job
+
+
+def _attempt_number(run_parent: Path, run_id: str, seed: int, config_hash_value: str) -> int:
+    """Count earlier runs of the same science+seed as attempts, not new seeds."""
+    attempt = 1
+    if not run_parent.is_dir():
+        return attempt
+    for directory in run_parent.iterdir():
+        if not directory.is_dir() or directory.name == run_id:
+            continue
+        meta_file = directory / "run.json"
+        if not meta_file.is_file():
+            continue
+        try:
+            other = json.loads(meta_file.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if int(other.get("seed", -1)) != int(seed):
+            continue
+        if other.get("config_hash") != config_hash_value:
+            continue
+        if other.get("status") not in ("running", "completed"):
+            continue
+        attempt += 1
+    return attempt
 
 
 def _make_run_id(cfg: dict, run_root: Path | None) -> str:

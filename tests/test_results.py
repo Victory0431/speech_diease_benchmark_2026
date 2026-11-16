@@ -89,6 +89,71 @@ def test_aggregate_computes_cross_seed_stats_and_is_deterministic(tmp_path):
     assert (group_dir / "aggregate.json").read_text(encoding="utf-8") == first
 
 
+def test_aggregate_merges_same_seed_attempts_without_inflating_seed_count(tmp_path):
+    from sddbench.results.aggregate import aggregate_runs
+
+    runs = tmp_path / "runs"
+    for run_id, seed, value, attempt in (("s0a", 0, 0.6, 1), ("s0b", 0, 0.8, 2),
+                                         ("s1a", 1, 1.0, 1)):
+        run_dir = _make_run_dir(runs, run_id)
+        doc = _metrics(run_id)
+        for split in ("train", "val", "test"):
+            for level in ("window", "recording", "subject"):
+                doc["metrics"][split][level]["balanced_accuracy"] = value
+                doc["metrics"][split][level]["auroc"] = value
+        (run_dir / "metrics.json").write_text(json.dumps(doc), encoding="utf-8")
+        run = _run(run_id)
+        run["seed"] = seed
+        run["attempt"] = attempt
+        (run_dir / "run.json").write_text(json.dumps(run), encoding="utf-8")
+
+    frame = aggregate_runs(runs, tmp_path / "out", bootstrap=100, seed=0)
+    row = frame.iloc[0]
+    assert row["n_runs"] == 3
+    assert row["n_seeds"] == 2
+    # seed 0 = mean(0.6, 0.8); seed 1 = 1.0 -> (0.7 + 1.0) / 2
+    assert row["balanced_accuracy_mean"] == pytest.approx(0.85)
+    group_dir = next((tmp_path / "out" / "demo" / "aggregates").iterdir())
+    payload = json.loads((group_dir / "aggregate.json").read_text(encoding="utf-8"))
+    assert payload["n_seeds"] == 2 and payload["n_runs"] == 3
+    assert payload["attempts_per_seed"] == {"0": 2, "1": 1}
+    assert payload["bootstrap"]["axis"] == "training_seed"
+    assert len(payload["seed_level"]) == 2
+
+
+def test_aggregate_never_mixes_feature_identity_or_threshold(tmp_path):
+    from sddbench.results.aggregate import aggregate_runs
+
+    runs = tmp_path / "runs"
+    _make_run_dir(runs, "base")
+    other = _make_run_dir(runs, "other_feature")
+    run = _run("other_feature")
+    run["data"]["feature_cache"]["feature_hash"] = "h2"
+    (other / "run.json").write_text(json.dumps(run), encoding="utf-8")
+    threshold = _make_run_dir(runs, "other_threshold")
+    run = _run("other_threshold")
+    run["evaluation"] = {"binary_threshold": 0.3}
+    run["evaluation_unit"] = "subject"
+    (threshold / "run.json").write_text(json.dumps(run), encoding="utf-8")
+
+    frame = aggregate_runs(runs, tmp_path / "out", bootstrap=50, seed=0)
+    assert len(frame) == 3, "different feature hash / threshold must be separate groups"
+    assert frame["signature"].nunique() == 3
+
+
+def test_failed_run_is_not_aggregated_or_published(tmp_path):
+    from sddbench.results.aggregate import load_runs
+
+    run_dir = _make_run_dir(tmp_path / "runs", "failed")
+    run = _run("failed")
+    run["status"] = "failed"
+    run["error"] = "RunError: boom"
+    (run_dir / "run.json").write_text(json.dumps(run), encoding="utf-8")
+    assert load_runs(tmp_path / "runs") == []
+    with pytest.raises(ResultsContractError, match="only completed"):
+        publish_run(run_dir, tmp_path / "results")
+
+
 def test_aggregate_handles_single_run(tmp_path):
     from sddbench.results.aggregate import aggregate_runs
 
@@ -106,7 +171,24 @@ def _run(run_id: str = "run1") -> dict:
         "dataset": "demo", "task_id": "demo_v1",
         "prepared_id": "prep", "split_id": "split",
         "class_order": ["control", "disorder"], "positive_class": "disorder",
-        "seed": 0, "model": {"name": "mlp", "hidden_dims": [8], "dropout": 0.1},
+        "seed": 0, "seed_role": "training", "attempt": 1,
+        "evaluation": {"binary_threshold": 0.4},
+        "selection_metric": "subject_balanced_accuracy", "trained_epochs": 7,
+        "identity": {"task_snapshot": "/abs/prep/task.yaml", "task_hash": "th",
+                     "manifest_fingerprint": "mf", "split_fingerprint": "sf"},
+        "task": {"task_hash": "th", "grouping": "subject",
+                 "labels": {"class_order": ["control", "disorder"]}},
+        "preprocess": {"path": "configs/preprocessing/x.yaml", "fingerprint": "fp",
+                       "config": {"sample_rate_policy": "native"}},
+        "feature": {"path": "configs/features/x.yaml", "recipe_id": "rec",
+                    "feature_key": "k1", "feature_hash": "h1",
+                    "sample_rate": 16000, "dim": 40, "config": {"feature_type": "mfcc"}},
+        "checkpoints": {
+            "best": {"file": "/abs/run/best.pt", "role": "best_val_selection"},
+            "last": {"file": "/abs/run/last.pt", "role": "last_epoch",
+                     "resume_supported": False}},
+        "coverage": {"test": {"n_expected": 8, "n_predicted": 8}},
+        "completion": {"verified": True}, "model": {"name": "mlp", "hidden_dims": [8], "dropout": 0.1},
         "training": {"learning_rate": 0.001, "batch_size": 8, "device": "cpu"},
         "best_epoch": 3, "best_val_subject_balanced_accuracy": 0.9,
         "elapsed_sec": 1.0, "code_version": "0.1.0", "config_hash": "abc",
@@ -165,6 +247,12 @@ def test_sanitize_meta_drops_paths_and_patient_rows():
     assert "/abs/" not in text
     assert "manifest.csv" not in text
     assert "predictions" not in text
+    assert "best.pt" not in text
+    assert meta["identity"]["task_hash"] == "th"
+    assert "task_snapshot" not in meta["identity"]
+    assert meta["checkpoints"]["last"]["resume_supported"] is False
+    assert meta["attempt"] == 1 and meta["seed_role"] == "training"
+    assert meta["evaluation"]["binary_threshold"] == 0.4
     assert meta["contract_version"] == CONTRACT_VERSION
     assert meta["data"]["feature_cache"] == {
         "feature_key": "k1", "feature_hash": "h1", "view_fingerprint": "v1",

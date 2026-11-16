@@ -21,6 +21,7 @@ from sddbench.features.cache import FeatureCache
 from sddbench.features.mfcc import normalize_feature_config
 from sddbench.modeling.experiment import (
     ExperimentConfigError,
+    config_hash,
     expand_grid,
     load_experiment,
     set_override,
@@ -217,7 +218,9 @@ def test_end_to_end_run_writes_result_pack(tmp_path):
     metrics = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
     assert metrics["evaluation_unit"] == "subject"
     assert metrics["class_order"] == ["control", "disorder"]
-    assert metrics["coverage"]["test"] == {"n_expected": 8, "n_predicted": 8}
+    assert metrics["coverage"]["test"] == {
+        "n_expected": 8, "n_predicted": 8,
+        "n_expected_subjects": 2, "n_predicted_subjects": 2}
     subject_pred = pd.read_csv(out / "predictions_subjects.csv")
     assert set(subject_pred["split"]) == {"train", "val", "test"}
     assert subject_pred["prob_control"].between(0, 1).all()
@@ -242,6 +245,71 @@ def test_recording_unit_run_is_supported(tmp_path):
     assert job["best_val_balanced_accuracy"] == job["best_val_subject_balanced_accuracy"]
     assert "val_recording_balanced_accuracy" in pd.read_csv(
         Path(job["out_dir"]) / "history.csv").columns
+
+
+def test_run_lifecycle_records_identity_window_facts_and_checkpoint_roles(tmp_path):
+    repo, workspace, runs = _build_workspace(tmp_path)
+    cfg = load_experiment(_experiment_cfg(tmp_path))
+    job = run_experiment(cfg, workspace, repo, run_root=runs)
+    out = Path(job["out_dir"])
+    record = json.loads((out / "run.json").read_text(encoding="utf-8"))
+
+    assert record["status"] == "completed"
+    assert record["phase"] == "completed"
+    assert record["completion"]["verified"] is True
+    assert record["attempt"] == 1
+    assert record["seed_role"] == "training"
+    assert record["environment"]["command"]
+    assert "commit" in record["git"] and "dirty" in record["git"]
+    assert record["identity"]["task_hash"]
+    assert record["task"]["config"]["task_id"] == "demo_v1"
+    assert record["preprocess"]["config"]["sample_rate_policy"] == "native"
+    assert record["feature"]["feature_key"].startswith("mfcc_")
+    assert record["config_hash"] != config_hash(cfg), "label/task identity must enter hash"
+
+    prepared = workspace / "prepared" / "demo_v1" / "prep1"
+    assert (out / "inputs" / "task.yaml").read_text(encoding="utf-8") == \
+        (prepared / "task.yaml").read_text(encoding="utf-8")
+    assert (out / "inputs" / "feature_index.csv").is_file()
+    assert (out / "inputs" / "preprocess.yaml").is_file()
+    assert (out / "inputs" / "features.yaml").is_file()
+
+    predictions = pd.read_csv(out / "predictions_windows.csv")
+    assert predictions["window_id"].str.startswith("demo|").all()
+    # valid_frames=100 at 16 kHz: real window fact, never the sample id/duration
+    assert set(predictions["valid_seconds"].round(6)) == {round(100 / 16000, 6)}
+
+    last = torch.load(out / "last.pt", weights_only=False)
+    best = torch.load(out / "best.pt", weights_only=False)
+    assert last["role"] == "last_epoch"
+    assert last["resume_supported"] is False
+    assert last["epoch"] == record["trained_epochs"]
+    assert best["role"] == "best_val_selection"
+
+
+def test_failed_run_keeps_config_identity_and_failure_reason(tmp_path):
+    repo, workspace, runs = _build_workspace(tmp_path)
+    cfg = load_experiment(_experiment_cfg(tmp_path))
+    next((workspace / "cache").rglob("index.csv")).unlink()
+    with pytest.raises(RunError, match="feature cache"):
+        run_experiment(cfg, workspace, repo, run_root=runs)
+    dirs = [p for p in runs.iterdir() if p.is_dir()]
+    assert len(dirs) == 1
+    record = json.loads((dirs[0] / "run.json").read_text(encoding="utf-8"))
+    assert record["status"] == "failed"
+    assert record["config"]["experiment_id"] == "demo_mlp"
+    assert "feature cache" in record["error"]
+    assert not (dirs[0] / "metrics.json").exists()
+
+
+def test_same_config_rerun_is_recorded_as_attempt_not_new_seed(tmp_path):
+    repo, workspace, runs = _build_workspace(tmp_path)
+    cfg = load_experiment(_experiment_cfg(tmp_path))
+    first = run_experiment(cfg, workspace, repo, run_root=runs)
+    second = run_experiment(cfg, workspace, repo, run_root=runs)
+    assert first["out_dir"] != second["out_dir"]
+    assert (first["attempt"], second["attempt"]) == (1, 2)
+    assert first["seed"] == second["seed"]
 
 
 def test_person_leakage_is_rejected(tmp_path):

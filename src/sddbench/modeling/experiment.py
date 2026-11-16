@@ -223,12 +223,24 @@ def expand_grid(base_cfg: dict, grid: dict[str, list]) -> list[dict]:
     return configs
 
 
-def config_hash(cfg: dict) -> str:
+def config_hash(cfg: dict, context: dict | None = None) -> str:
+    """Content hash of the scientific configuration.
+
+    Covers the resolved label definition (class order/positive class) and, when
+    provided by the trainer, the frozen task identity and the resolved
+    preprocess/feature hashes. Paths alone are not enough: two experiment files
+    that point at the same YAML path but were prepared differently must not share
+    a hash.
+    """
     import hashlib
     payload = {
         "task_id": cfg.get("task_id"), "dataset": cfg.get("dataset"),
         "prepared_id": cfg.get("prepared_id"), "split_id": cfg.get("split_id"),
         "features": cfg.get("features"), "model": cfg.get("model"),
         "training": cfg.get("training"), "evaluation": cfg.get("evaluation"),
+        "labels": cfg.get("labels"),
     }
-    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+    if context:
+        payload["context"] = context
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()
