@@ -23,9 +23,9 @@ from .. import __version__
 from ..data.windows import normalize_preprocess, preprocess_fingerprint
 from ..features.registry import normalize_feature_config, recipe_id
 from ..results.contract import CONTRACT_VERSION, validate_metrics
-from .experiment import config_hash
+from .experiment import config_hash, validate_experiment
 from .features import load_features
-from .metrics import binary_metrics, per_class_rows
+from .metrics import binary_metrics, decide_binary, per_class_rows
 from .mlp import MLP
 from .report import render_run_report, write_figures
 
@@ -71,6 +71,7 @@ def _load_task_config(repo_root: Path, dataset: str, task_id: str) -> dict:
 
 
 def load_run_data(cfg: dict, workspace: Path, repo_root: Path) -> dict:
+    validate_experiment(cfg)
     task_id = cfg.get("task_id") or f"{cfg['dataset']}_v1"
     prepared_dir = workspace / "prepared" / task_id / cfg["prepared_id"]
     split_dir = workspace / "splits" / task_id / cfg["split_id"]
@@ -132,6 +133,10 @@ def load_run_data(cfg: dict, workspace: Path, repo_root: Path) -> dict:
                        or labels_cfg.get("class_order")
                        or ["control", "disorder"])
     observed = sorted(merged["label"].astype(str).unique().tolist())
+    if len(observed) != 2:
+        raise RunError(
+            f"the MLP baseline is binary only; manifest has {len(observed)} "
+            f"classes: {observed}")
     if set(observed) != set(class_order):
         raise RunError(f"labels in manifest {observed} != class_order {class_order}")
     positive = (cfg.get("labels") or {}).get("positive_class") \
@@ -195,29 +200,39 @@ def _aggregate_subjects(frame: pd.DataFrame, probs: np.ndarray,
     return agg
 
 
+def _sample_weights(groups: np.ndarray, train_mask: np.ndarray,
+                    strategy: str) -> np.ndarray:
+    """Weights for the training objective, fitted on train rows only (F12)."""
+    weights = np.ones(len(groups), dtype=np.float64)
+    if strategy == "subject_balanced":
+        weights[train_mask] = _subject_weights(groups[train_mask])
+    return weights.astype(np.float32)
+
+
 def _subject_metric(frame: pd.DataFrame, probs: np.ndarray,
-                    class_order: list[str], positive_index: int) -> dict:
+                    class_order: list[str], positive_index: int,
+                    threshold: float = 0.5) -> dict:
     agg = _aggregate_subjects(frame, probs, class_order)
     y = (agg["label"].to_numpy() == class_order[positive_index]).astype(int)
     p = agg[[f"prob_{name}" for name in class_order]].to_numpy()
-    return binary_metrics(y, p, positive_index)
+    return binary_metrics(y, p, positive_index, threshold)
 
 
 def _level_metric(frame: pd.DataFrame, probs: np.ndarray, class_order: list[str],
-                  positive_index: int, unit: str) -> dict:
+                  positive_index: int, unit: str, threshold: float = 0.5) -> dict:
     if unit == "recording":
         y = (frame["label"].to_numpy() == class_order[positive_index]).astype(int)
-        return binary_metrics(y, probs, positive_index)
-    return _subject_metric(frame, probs, class_order, positive_index)
+        return binary_metrics(y, probs, positive_index, threshold)
+    return _subject_metric(frame, probs, class_order, positive_index, threshold)
 
 
 def _evaluate(frame: pd.DataFrame, probs: np.ndarray, class_order: list[str],
-              positive_index: int) -> dict:
+              positive_index: int, threshold: float = 0.5) -> dict:
     y = (frame["label"].to_numpy() == class_order[positive_index]).astype(int)
     return {
-        "window": binary_metrics(y, probs, positive_index),
-        "recording": binary_metrics(y, probs, positive_index),
-        "subject": _subject_metric(frame, probs, class_order, positive_index),
+        "window": binary_metrics(y, probs, positive_index, threshold),
+        "recording": binary_metrics(y, probs, positive_index, threshold),
+        "subject": _subject_metric(frame, probs, class_order, positive_index, threshold),
     }
 
 
@@ -239,7 +254,8 @@ def run_experiment(cfg: dict, workspace: Path, repo_root: Path,
         raise RunError("grouping=file means one recording per group; "
                        "set evaluation.unit=recording")
     default_selection = f"{unit}_balanced_accuracy"
-    selection_metric = str(cfg["training"].get("selection_metric", default_selection))
+    selection_metric = str(cfg["training"].get("selection_metric")
+                           or default_selection)
     if selection_metric != default_selection:
         raise RunError(f"selection_metric must be {default_selection!r} for "
                        f"evaluation.unit={unit!r}, got {selection_metric!r}")
@@ -248,6 +264,12 @@ def run_experiment(cfg: dict, workspace: Path, repo_root: Path,
     X = data["X"]
     class_order = data["class_order"]
     positive_index = data["positive_index"]
+    if len(class_order) != 2:
+        raise RunError(f"the MLP baseline is binary only; class_order has "
+                       f"{len(class_order)} classes: {class_order}")
+    threshold = float((cfg.get("evaluation") or {}).get("binary_threshold", 0.5))
+    if not 0.0 <= threshold <= 1.0:
+        raise RunError(f"evaluation.binary_threshold must be in [0, 1], got {threshold!r}")
     y = np.array([class_order.index(v) for v in merged["label"].astype(str)], dtype=int)
     groups = merged["group_id"].astype(str).to_numpy()
     splits = merged["split"].astype(str).to_numpy()
@@ -265,9 +287,8 @@ def run_experiment(cfg: dict, workspace: Path, repo_root: Path,
     scaler_std[scaler_std == 0] = 1.0
     Z = ((X - scaler_mean) / scaler_std).astype(np.float32)
 
-    weights = np.ones(len(y), dtype=np.float32)
-    if cfg["training"].get("class_weighting") == "subject_balanced":
-        weights = _subject_weights(groups).astype(np.float32)
+    weights = _sample_weights(
+        groups, train_mask, str(cfg["training"].get("class_weighting")))
 
     hidden = [int(v) for v in cfg["model"]["hidden_dims"]]
     model = MLP(X.shape[1], hidden, len(class_order),
@@ -317,7 +338,8 @@ def run_experiment(cfg: dict, workspace: Path, repo_root: Path,
             seen += len(batch)
         val_probs = _predict(model, Z[val_mask], device, batch_size)
         val_frame = merged.loc[val_mask, ["group_id", "label", "split"]]
-        val_m = _level_metric(val_frame, val_probs, class_order, positive_index, unit)
+        val_m = _level_metric(val_frame, val_probs, class_order, positive_index,
+                              unit, threshold)
         val_loss = float(-np.mean(np.log(np.clip(
             val_probs[np.arange(val_probs.shape[0]), y[val_mask]], 1e-12, 1.0))))
         score = val_m["balanced_accuracy"] if val_m["balanced_accuracy"] is not None else -1.0
@@ -345,8 +367,8 @@ def run_experiment(cfg: dict, workspace: Path, repo_root: Path,
         mask = splits == split
         frame = merged.loc[mask, ["sample_id", "group_id", "label", "split"]]
         part_probs = probs[mask]
-        metrics[split] = _evaluate(frame, part_probs, class_order, positive_index)
-        pred = part_probs.argmax(axis=1)
+        metrics[split] = _evaluate(frame, part_probs, class_order, positive_index, threshold)
+        pred = decide_binary(part_probs[:, positive_index], threshold)
         durations = merged.loc[mask, "duration_decoded_sec"] \
             if "duration_decoded_sec" in merged.columns else pd.Series([None] * int(mask.sum()))
         for pos, (_, row) in enumerate(frame.iterrows()):
@@ -357,12 +379,13 @@ def run_experiment(cfg: dict, workspace: Path, repo_root: Path,
                 "sample_id": row["sample_id"],
                 "subject_id": row["group_id"],
                 "y_true": row["label"],
-                "y_pred": class_order[pred[pos]],
                 "valid_seconds": None if pd.isna(duration) else float(duration),
             }
             for i, name in enumerate(class_order):
                 item[f"prob_{name}"] = float(part_probs[pos, i])
-            item["correct"] = int(class_order[pred[pos]] == row["label"])
+            predicted_index = positive_index if int(pred[pos]) == 1 else 1 - positive_index
+            item["y_pred"] = class_order[int(predicted_index)]
+            item["correct"] = int(item["y_pred"] == row["label"])
             predictions["window"].append(item)
             predictions["recording"].append(dict(item))
         agg = _aggregate_subjects(frame, part_probs, class_order)
@@ -372,7 +395,10 @@ def run_experiment(cfg: dict, workspace: Path, repo_root: Path,
                     "y_true": row["label"], "n_recordings": int(row["n_recordings"])}
             for name, value in zip(class_order, probs_row):
                 item[f"prob_{name}"] = float(value)
-            item["y_pred"] = class_order[int(np.argmax(probs_row))]
+            p_pos = float(row[f"prob_{class_order[positive_index]}"])
+            predicted_index = positive_index if float(p_pos) >= threshold \
+                else 1 - positive_index
+            item["y_pred"] = class_order[int(predicted_index)]
             item["correct"] = int(item["y_pred"] == row["label"])
             predictions["subject"].append(item)
 
@@ -433,6 +459,7 @@ def run_experiment(cfg: dict, workspace: Path, repo_root: Path,
             "dim": int(X.shape[1]),
         },
         "model": cfg["model"], "training": cfg["training"],
+        "evaluation": cfg["evaluation"],
         "evaluation_unit": unit, "primary_unit": unit, "grouping": grouping,
         "selection_metric": selection_metric,
         "best_epoch": best_epoch,
@@ -492,13 +519,14 @@ def run_experiment(cfg: dict, workspace: Path, repo_root: Path,
         part = merged.loc[splits == split, ["sample_id", "group_id", "label", "split"]]
         rows = per_class_rows(
             (part["label"].to_numpy() == data["positive_class"]).astype(int),
-            probs[splits == split], class_order, positive_index)
+            probs[splits == split], class_order, positive_index, threshold)
         for row in rows:
             per_class.append({"split": split, "level": "window", **row})
         subj = _aggregate_subjects(part, probs[splits == split], class_order)
         rows = per_class_rows(
             (subj["label"].to_numpy() == data["positive_class"]).astype(int),
-            subj[[f"prob_{n}" for n in class_order]].to_numpy(), class_order, positive_index)
+            subj[[f"prob_{n}" for n in class_order]].to_numpy(), class_order,
+            positive_index, threshold)
         for row in rows:
             per_class.append({"split": split, "level": "subject", **row})
     pd.DataFrame(per_class).to_csv(out_dir / "metrics_per_class.csv", index=False)

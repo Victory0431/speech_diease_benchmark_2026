@@ -12,16 +12,16 @@
 | --- | --- | --- | --- | --- | --- |
 | F01 | P0 | UAspeech 标签冲突被“目录确认”替代回源 | fixed | A | 数据集配置/数据卡/准入/榜单统一 `technical_only/label_conflict` |
 | F02 | P0 | 无人员信息默认按文件分组并自动 approved | fixed | A | `identity` 与 `label` 证据分离；`benchmark_eligible` 默认 false |
-| F03 | P0 | AP/ROC 对并列分数处理错误 | in_progress | B | 待补 |
+| F03 | P0 | AP/ROC 对并列分数处理错误 | fixed | B | 按唯一阈值分组；AP/ROC 与图同源；行序不变 |
 | F04 | P0 | task/manifest/原件/缓存身份未闭环 | in_progress | C | 待补 |
 | F05 | P0 | aggregate 签名遗漏前端/准备版本/类别 | in_progress | D | 待补 |
-| F06 | P1 | 阈值不生效；配置校验不统一 | in_progress | B | 待补 |
+| F06 | P1 | 阈值不生效；配置校验不统一 | fixed | B | `binary_threshold` 全链路生效；严格校验 |
 | F07 | P1 | 训练用源 Hz 找缓存，重采样接不通 | in_progress | C | 待补 |
 | F08 | P1 | 网页改特征只写 YAML，C0 开关不可用 | in_progress | E | 待补 |
 | F09 | P0 | run 太晚建立、缺快照、`last.pt` 语义不真 | in_progress | D | 待补 |
-| F10 | P1 | `ratio_longer_than_L` 漏除样本数 | in_progress | B | 待补 |
+| F10 | P1 | `ratio_longer_than_L` 漏除样本数 | fixed | B | 比例已除以 n，并限制在 [0,1] |
 | F11 | P1 | 文档称 ffmpeg 解码后备，实际只有 probe | in_progress | E | 待补 |
-| F12 | P1 | 人员权重在全部集合上归一 | in_progress | B | 待补 |
+| F12 | P1 | 人员权重在全部集合上归一 | fixed | B | 权重只在 train 内计算与归一 |
 
 ## 批次 A（F01、F02）
 
@@ -70,7 +70,58 @@
 
 ## 批次 B（F03、F06、F10、F12）
 
-待补。
+### F03 AP / ROC / 逐类指标
+
+- **复现**：`average_precision([1,0],[0.5,0.5])=1.0`，行序交换后 0.5；
+  原 `_roc_points` 逐行连线，图面积与 rank AUROC 对 ties 不一致。
+- **修复**：
+  - 新增 `_curve`：按**唯一分数**分组，ties 只产生一个工作点；
+    AP = `Σ(Δrecall × precision)`，AUROC = 该 ROC 点列的梯形面积；
+  - 报告层改用同一个 `roc_points()`，数值与图不再分叉；
+  - `per_class_rows` 按 `positive_index` 取正/负统计，support 与 predicted
+    从混淆矩阵的真实正类定义推导，不再固定 `class_names[1]`；
+  - F1 零分母统一为 0.0（同 sklearn `zero_division=0`）。
+- **测试**：`tests/test_metrics_contract.py` 覆盖 ties 行序不变、图面积=AUROC、
+  全同分/完美/全错、缺类、F1 零分母、`positive_index=0/1` 的 support 与名称；
+  原 `test_modeling` 的已知 AP 期望保留为 `7/12`（该值本身与阈值定义一致）。
+- **历史结果影响**：旧 AP/ROC 图只影响并列分数或单类边界样本；
+  如需引用旧成绩，应从已保存的 `predictions.csv` 重算指标，不必重训。
+
+### F06 阈值与配置校验
+
+- **复现**：`evaluation.binary_threshold` 从 0.01 改到 0.99，记录仍是 0.5、
+  混淆矩阵不变；`selection_direction` 可写但总是最大化；未知字段被静默保存。
+- **修复**：
+  - `DEFAULTS` 增加 `evaluation.binary_threshold=0.5`；
+  - 新增 `decide_binary(p, threshold)`：预测标签、指标、混淆矩阵、ROC 图
+    全部使用 `p_positive >= threshold`，与 `argmax` 的 tie 行为统一；
+    `metrics.json` 记录实际 threshold；
+  - `validate_experiment()` 严格校验：未知顶层/分节键、类型与范围、
+    `selection_direction` 仅允许 `max`（`min` 未实现，直接拒绝）、
+    `primary_metric` 仅 `balanced_accuracy`、类别必须恰好 2 个且正类在其中；
+  - `load_experiment`、CLI `--set` 之后、`sweep` 每个组合、
+    `web.build_configs` 都调用同一个校验；
+  - `load_run_data` 在训练前拒绝非二分类 manifest。
+- **测试**：阈值改变混淆矩阵、等于阈值判正、未知键/非法值/未实现选项被拒绝、
+  override 后重验。
+- **历史结果影响**：旧 run 的 `binary_threshold` 实际按 0.5 计算；
+  若论文使用过其他阈值，必须用保存的预测重算指标，不能沿用旧混淆矩阵。
+
+### F10 长度比例
+
+- **复现**：`ratio_longer_than_L` 返回计数（可为 73），不是 0–1 比例。
+- **修复**：`count/n`，空输入返回 0.0；与 `ratio_shorter_than_L` 口径一致。
+- **测试**：4 条录音、L=4 时 longer=2、比例 0.5，且落在 [0,1]。
+
+### F12 人员权重
+
+- **复现**：`_subject_weights(groups)` 对 train+val+test 全体计数并归一，
+  改变验证/测试构成会改变训练损失尺度。
+- **修复**：新增 `_sample_weights`，只在 `train_mask` 上调用
+  `_subject_weights`，val/test 权重保持 1 且不参与训练。
+- **测试**：修改 val/test 组分布后，train 权重逐元素不变；每个训练组总权重相同。
+- **历史结果影响**：历史 run 的训练损失尺度可能受验证/测试构成影响；
+  正式复现应使用新代码重训，不能把旧权重当作同一训练目标。
 
 ## 批次 C（F04、F07）
 

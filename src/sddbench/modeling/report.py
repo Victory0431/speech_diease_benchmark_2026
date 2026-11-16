@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
-from .metrics import binary_metrics, confusion
+from .metrics import confusion, decide_binary, roc_points
 
 COLORS = {"control": "#2f6f9f", "disorder": "#c0504d"}
 
@@ -29,25 +29,14 @@ def _fmt(value, nd: int = 3) -> str:
 
 
 def _subject_probs(frame: pd.DataFrame, probs: np.ndarray,
-                   class_order: list[str]) -> tuple[np.ndarray, np.ndarray]:
+                   class_order: list[str], positive_index: int) -> tuple[np.ndarray, np.ndarray]:
     tmp = frame[["group_id", "label"]].copy()
     for i, name in enumerate(class_order):
         tmp[f"prob_{name}"] = probs[:, i]
     agg = tmp.groupby(["group_id", "label"], as_index=False).agg(
         **{f"prob_{name}": (f"prob_{name}", "mean") for name in class_order})
-    y = (agg["label"].astype(str) == class_order[1]).astype(int).to_numpy()
+    y = (agg["label"].astype(str) == class_order[positive_index]).astype(int).to_numpy()
     return y, agg[[f"prob_{name}" for name in class_order]].to_numpy()
-
-
-def _roc_points(y: np.ndarray, score: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    order = np.argsort(-score)
-    y = y[order]
-    score = score[order]
-    tp = np.cumsum(y)
-    fp = np.cumsum(1 - y)
-    tpr = tp / max(tp[-1], 1)
-    fpr = fp / max(fp[-1], 1)
-    return np.concatenate([[0.0], fpr]), np.concatenate([[0.0], tpr])
 
 
 def write_figures(out_dir: Path, job: dict, probs: np.ndarray,
@@ -57,21 +46,22 @@ def write_figures(out_dir: Path, job: dict, probs: np.ndarray,
     fig_dir = out_dir / "figures"
     fig_dir.mkdir(parents=True, exist_ok=True)
     positive = class_order.index(job["positive_class"])
+    threshold = float((job.get("evaluation") or {}).get("binary_threshold", 0.5))
     written: list[str] = []
 
     test = splits == "test"
     if test.any():
         unit = job.get("primary_unit") or job.get("evaluation_unit") or "subject"
-        y_true = (merged.loc[test, "label"].astype(str) == class_order[1]).astype(int).to_numpy()
+        y_true = (merged.loc[test, "label"].astype(str) == class_order[positive]).astype(int).to_numpy()
         p_pos = probs[test, positive]
 
         # Confusion matrices: window-level and primary-unit level (subject or recording).
         y_sub, p_sub = _subject_probs(
-            merged.loc[test, ["group_id", "label"]], probs[test], class_order)
+            merged.loc[test, ["group_id", "label"]], probs[test], class_order, positive)
         fig, axes = plt.subplots(1, 2, figsize=(8.4, 3.6))
         for ax, (name, y, p) in zip(axes, [
                 ("window", y_true, p_pos), (unit, y_sub, p_sub[:, positive])]):
-            cm = confusion(y, (p >= 0.5).astype(int))
+            cm = confusion(y, decide_binary(p, threshold))
             matrix = np.array([[cm["tn"], cm["fp"]], [cm["fn"], cm["tp"]]])
             ax.imshow(matrix, cmap="Blues")
             for i in range(2):
@@ -92,9 +82,10 @@ def write_figures(out_dir: Path, job: dict, probs: np.ndarray,
         fig, ax = plt.subplots(figsize=(4.2, 4.0))
         for name, y, score in (("window", y_true, p_pos),
                                (unit, y_sub, p_sub[:, positive])):
-            if len(np.unique(y)) < 2:
+            points = roc_points(y, score)
+            if points is None:
                 continue
-            fpr, tpr = _roc_points(y, score)
+            fpr, tpr = points
             auc = job["metrics"]["test"][name]["auroc"]
             ax.plot(fpr, tpr, label=f"{name} (AUC={_fmt(auc)})")
         ax.plot([0, 1], [0, 1], "--", color="#999", linewidth=1)

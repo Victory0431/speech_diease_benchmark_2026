@@ -95,6 +95,7 @@ from .modeling.experiment import (
     ExperimentConfigError,
     load_experiment,
     set_override,
+    validate_experiment,
 )
 from .modeling.features import FeatureLoadError
 from .modeling.trainer import RunError, load_run_data, run_experiment
@@ -480,6 +481,7 @@ def cmd_run(args) -> int:
             set_override(cfg, assignment)
         if args.device:
             cfg["training"]["device"] = args.device
+        validate_experiment(cfg)  # overrides must not bypass validation
         print(f"[run] experiment={cfg['experiment_id']} dataset={cfg['dataset']} "
               f"prepared={cfg['prepared_id']} split={cfg['split_id']}")
         if args.dry_run:
@@ -526,6 +528,8 @@ def cmd_sweep(args) -> int:
         sweep = load_sweep(args.grid)
         from .modeling.experiment import expand_grid
         combos = expand_grid(cfg, sweep["axes"])
+        for combo in combos:
+            validate_experiment(combo)
         if args.max_runs:
             combos = combos[:args.max_runs]
         print(f"[sweep] experiment={cfg['experiment_id']} "

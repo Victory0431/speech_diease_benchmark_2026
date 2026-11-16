@@ -12,6 +12,8 @@ from pathlib import Path
 
 import yaml
 
+from ..modeling.experiment import validate_experiment
+
 SCHEMA_VERSION = "1.0"
 
 IMPACT_LABELS = {
@@ -155,6 +157,9 @@ SECTIONS = [
             _f("evaluation.unit", "主评价单位", "select", "subject",
                impact="training", options=["subject", "recording"],
                help="grouping=file 时必须为 recording。"),
+            _f("evaluation.binary_threshold", "正类判定阈值", "float", 0.5,
+               impact="training", minimum=0.0, maximum=1.0, step=0.05,
+               help="p(positive) >= threshold 判为正类；预测标签、指标、图共用同一规则。"),
         ],
     },
 ]
@@ -360,6 +365,7 @@ def build_configs(repo_root: Path, dataset_id: str, dataset_cfg: dict,
         "evaluation": {
             "unit": clean["evaluation.unit"],
             "primary_metric": "balanced_accuracy",
+            "binary_threshold": clean["evaluation.binary_threshold"],
         },
         "labels": {
             "class_order": (dataset_cfg.get("labels") or {}).get(
@@ -368,6 +374,7 @@ def build_configs(repo_root: Path, dataset_id: str, dataset_cfg: dict,
                 "positive_class", "disorder"),
         },
     }
+    validate_experiment(experiment)  # same gate as CLI/YAML/sweep
     return experiment, preprocess, features
 
 
